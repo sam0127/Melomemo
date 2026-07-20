@@ -10,6 +10,7 @@ import {
   addNote,
   moveNote,
   removeNote,
+  resizeNote,
   seedScoreFromAnalysis,
 } from '../../score/scoreEdits.ts';
 
@@ -38,6 +39,7 @@ export function useScore(
   /** True once edits have been persisted — drives the "Edited" badge. */
   edited: boolean;
   moveNote: (noteId: string, midi: number, startMs: number) => void;
+  resizeNote: (noteId: string, durationMs: number) => void;
   createNote: (midi: number, startMs: number) => void;
   deleteNote: (noteId: string) => void;
   /** Discards edits so the machine transcription shows again. */
@@ -92,6 +94,11 @@ export function useScore(
     moveNote: useCallback(
       (noteId, midi, startMs) =>
         apply((current) => moveNote(current, noteId, midi, startMs)),
+      [apply],
+    ),
+    resizeNote: useCallback(
+      (noteId, durationMs) =>
+        apply((current) => resizeNote(current, noteId, durationMs)),
       [apply],
     ),
     createNote: useCallback(

@@ -20,6 +20,7 @@ const DURATION_MS = 4000;
 function renderRoll(notes: ScoreNote[] = NOTES) {
   const editor: RollEditor = {
     onMove: vi.fn(),
+    onResize: vi.fn(),
     onCreate: vi.fn(),
     onDelete: vi.fn(),
   };
@@ -137,6 +138,32 @@ describe('pointer editing', () => {
     expect(editor.onDelete).toHaveBeenCalledWith('b');
   });
 
+  it('still drags when pointer capture is refused', () => {
+    /*
+     * setPointerCapture throws NotFoundError whenever the browser does not
+     * consider the id an active pointer. It used to be called unguarded, so
+     * the throw aborted the handler before the drag was registered and
+     * dragging died silently. Capture only keeps events flowing when the
+     * pointer leaves the note — losing it must not lose the drag.
+     */
+    const { editor } = renderRoll();
+    const geometry = createRollGeometry(NOTES, DURATION_MS);
+    const rect = noteRect(/Note C4/);
+    Object.defineProperty(rect, 'setPointerCapture', {
+      value: () => {
+        throw new DOMException('No active pointer', 'NotFoundError');
+      },
+      configurable: true,
+    });
+
+    const dx = geometry.widthForMs(500);
+    fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
+    fireEvent.pointerMove(rect, { pointerId: 1, clientX: 10 + dx, clientY: 50 });
+    fireEvent.pointerUp(rect, { pointerId: 1, clientX: 10 + dx, clientY: 50 });
+
+    expect(editor.onMove).toHaveBeenCalledTimes(1);
+  });
+
   it('creates a note where empty space is double-clicked', () => {
     const { editor, container } = renderRoll();
     const svg = container.querySelector('svg')!;
@@ -151,6 +178,87 @@ describe('pointer editing', () => {
     const [midi, startMs] = vi.mocked(editor.onCreate).mock.calls[0]!;
     expect(midi).toBe(62);
     expect(startMs).toBeCloseTo(2000, 0);
+  });
+
+  describe('resizing', () => {
+    function selectNote(name: RegExp) {
+      const rect = noteRect(name);
+      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
+      fireEvent.pointerUp(rect, { pointerId: 1, clientX: 10, clientY: 50 });
+      return rect;
+    }
+
+    it('offers no resize grip until a note is selected', () => {
+      const { container } = renderRoll();
+      // A grip on every note would blanket short notes in targets and make
+      // ordinary dragging unreliable.
+      expect(container.querySelector('.piano-roll__handle')).toBeNull();
+
+      selectNote(/Note C4/);
+      expect(container.querySelector('.piano-roll__handle')).not.toBeNull();
+    });
+
+    it('lengthens the note when its end is dragged right', () => {
+      const { editor, container } = renderRoll();
+      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      selectNote(/Note C4/);
+
+      const handle = container.querySelector('.piano-roll__handle')!;
+      const dx = geometry.widthForMs(300);
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 2, clientX: 100, clientY: 50 });
+      fireEvent.pointerMove(handle, { pointerId: 2, clientX: 100 + dx, clientY: 50 });
+      fireEvent.pointerUp(handle, { pointerId: 2, clientX: 100 + dx, clientY: 50 });
+
+      expect(editor.onResize).toHaveBeenCalledTimes(1);
+      const [id, durationMs] = vi.mocked(editor.onResize).mock.calls[0]!;
+      expect(id).toBe('a');
+      expect(durationMs).toBeCloseTo(800, 0); // 500 + 300
+      // Resizing must never be mistaken for a move.
+      expect(editor.onMove).not.toHaveBeenCalled();
+    });
+
+    it('shortens when dragged left, and never past the floor', () => {
+      const { editor, container } = renderRoll();
+      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      selectNote(/Note C4/);
+
+      const handle = container.querySelector('.piano-roll__handle')!;
+      // Far further left than the note is long.
+      const dx = -geometry.widthForMs(5000);
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 2, clientX: 100, clientY: 50 });
+      fireEvent.pointerMove(handle, { pointerId: 2, clientX: 100 + dx, clientY: 50 });
+      fireEvent.pointerUp(handle, { pointerId: 2, clientX: 100 + dx, clientY: 50 });
+
+      const [, durationMs] = vi.mocked(editor.onResize).mock.calls[0]!;
+      expect(durationMs).toBe(40);
+    });
+
+    it('resizes from the keyboard with the bracket keys', async () => {
+      const user = userEvent.setup();
+      const { editor } = renderRoll();
+
+      noteRect(/Note C4/).focus();
+      // Brackets rather than Alt+Arrow, which is browser back/forward.
+      // "[[" is user-event's escape for a literal "[", which otherwise opens
+      // a key descriptor.
+      await user.keyboard(']');
+      expect(editor.onResize).toHaveBeenCalledWith('a', 550);
+
+      await user.keyboard('[[');
+      expect(editor.onResize).toHaveBeenCalledWith('a', 450);
+
+      await user.keyboard('{Shift>}]{/Shift}');
+      expect(editor.onResize).toHaveBeenCalledWith('a', 510);
+    });
+
+    it('advertises the length keys on the note itself', () => {
+      renderRoll();
+      // The grip is invisible to a screen reader user, so the keys have to be
+      // announced with the note.
+      expect(
+        noteRect(/Note C4/).getAttribute('aria-label'),
+      ).toContain('brackets change length');
+    });
   });
 
   /**
@@ -173,6 +281,18 @@ describe('pointer editing', () => {
       // Cancelling at touchstart is the only moment that works; by touchmove
       // the browser has already committed to scrolling.
       expect(dispatchTouch(rect, 'touchstart')).toBe(true);
+    });
+
+    it('cancels the browser gesture on the resize grip too', () => {
+      const { container } = renderRoll();
+      const rect = noteRect(/Note C4/);
+      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
+      fireEvent.pointerUp(rect, { pointerId: 1, clientX: 10, clientY: 50 });
+
+      // Without the grip in the selector, resize drags would be claimed as
+      // scrolls on Android exactly as note drags used to be.
+      const handle = container.querySelector('.piano-roll__handle')!;
+      expect(dispatchTouch(handle, 'touchstart')).toBe(true);
     });
 
     it('leaves touches on empty space alone so the roll still scrolls', () => {

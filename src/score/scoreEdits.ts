@@ -27,6 +27,12 @@ const MAX_MIDI = 127;
 /** Fallback length for a created note when the score is empty. */
 const DEFAULT_NOTE_MS = 300;
 
+/**
+ * Shortest a note can be dragged. Below this a note is invisible on the roll
+ * and inaudible in playback, so it would look like the resize deleted it.
+ */
+export const MIN_NOTE_DURATION_MS = 40;
+
 const clampMidi = (midi: number): number =>
   Math.min(MAX_MIDI, Math.max(MIN_MIDI, Math.round(midi)));
 
@@ -128,6 +134,29 @@ export function addNote(
   };
 
   return { score: withEdit(score, [...score.notes, created]), created };
+}
+
+/**
+ * Changes how long a note lasts, leaving its start where it is.
+ *
+ * Only the end moves — dragging the start would shift the note in time, which
+ * is what moveNote is for, and conflating the two makes a resize feel like it
+ * dragged the whole note.
+ */
+export function resizeNote(
+  score: ScoreDocument,
+  noteId: string,
+  durationMs: number,
+): ScoreDocument {
+  const index = score.notes.findIndex((note) => note.id === noteId);
+  if (index === -1) return score;
+
+  const notes = [...score.notes];
+  notes[index] = {
+    ...notes[index]!,
+    durationMs: Math.max(MIN_NOTE_DURATION_MS, Math.round(durationMs)),
+  };
+  return withEdit(score, notes);
 }
 
 /** Removes a note. Unknown ids are a no-op. */

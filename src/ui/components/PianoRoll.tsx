@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { hzToMidi, midiToName } from '../../core/pitch.ts';
 import type { QuantizedNote, ScoreNote } from '../../core/types.ts';
+import { MIN_NOTE_DURATION_MS } from '../../score/scoreEdits.ts';
 import {
   createRollGeometry,
   isAccidental,
@@ -23,6 +24,7 @@ export interface ContourData {
  */
 export interface RollEditor {
   onMove: (noteId: string, midi: number, startMs: number) => void;
+  onResize: (noteId: string, durationMs: number) => void;
   onCreate: (midi: number, startMs: number) => void;
   onDelete: (noteId: string) => void;
 }
@@ -51,14 +53,26 @@ const DRAG_THRESHOLD_PX = 4;
 const NUDGE_MS = 50;
 const FINE_NUDGE_MS = 10;
 
+/**
+ * Width of the resize grip straddling a note's end, in px.
+ *
+ * Sized for a fingertip rather than a cursor, but capped against the note's
+ * own width below so a short note doesn't become all grip and impossible to
+ * move.
+ */
+const HANDLE_WIDTH_PX = 14;
+
 interface DragState {
   noteId: string;
   pointerId: number;
+  /** Moving the note, or dragging its end to change its length. */
+  mode: 'move' | 'resize';
   originX: number;
   originY: number;
   /** The note's values when the gesture began. */
   startMidi: number;
   startMs: number;
+  startDurationMs: number;
   /** Becomes true once the threshold is crossed; a click never sets it. */
   moved: boolean;
 }
@@ -68,6 +82,7 @@ interface DragPreview {
   noteId: string;
   midi: number;
   startMs: number;
+  durationMs: number;
 }
 
 function describeNote(note: QuantizedNote): string {
@@ -173,14 +188,18 @@ export function PianoRoll({
 
     const onTouchStart = (event: TouchEvent) => {
       const target = event.target as Element | null;
-      // Matched on the note's own class, not on [data-editable] — the <svg>
+      // Matched on the notes' own classes, not on [data-editable] — the <svg>
       // also carries that attribute (for its touch-action rule), so an
       // attribute selector would match every touch on empty space too and
-      // leave the roll unscrollable.
+      // leave the roll unscrollable. The resize grip must be listed here as
+      // well, or dragging it on Android gets claimed as a scroll exactly as
+      // note drags used to be.
       //
       // Cancelling at touchstart is what stops the browser claiming the
       // gesture; by touchmove the decision is already made.
-      if (target?.closest?.('.piano-roll__note')) event.preventDefault();
+      if (target?.closest?.('.piano-roll__note, .piano-roll__handle')) {
+        event.preventDefault();
+      }
     };
     const onTouchMove = (event: TouchEvent) => {
       if (dragRef.current) event.preventDefault();
@@ -213,24 +232,39 @@ export function PianoRoll({
 
   // --- pointer editing -----------------------------------------------------
 
-  const handleNotePointerDown = (
+  const beginDrag = (
     event: React.PointerEvent<SVGRectElement>,
     note: ScoreNote,
+    mode: 'move' | 'resize',
   ) => {
     if (!editor) return;
     // Only primary-button drags; a right-click is the context menu's.
     if (event.button !== 0) return;
     event.stopPropagation();
 
-    // jsdom lacks pointer capture; the guard keeps tests honest.
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    /*
+     * Capture keeps events flowing when the pointer leaves the note mid-drag,
+     * which is an enhancement rather than a requirement — so a failure must
+     * not take the drag with it. It throws NotFoundError whenever the browser
+     * does not consider the id an active pointer, and an uncaught throw here
+     * aborts the handler before the drag is ever registered, silently
+     * disabling dragging altogether.
+     */
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } catch {
+      // Drag proceeds uncaptured.
+    }
+
     dragRef.current = {
       noteId: note.id,
       pointerId: event.pointerId,
+      mode,
       originX: event.clientX,
       originY: event.clientY,
       startMidi: note.midi,
       startMs: note.startMs,
+      startDurationMs: note.durationMs,
       moved: false,
     };
     setSelectedId(note.id);
@@ -247,13 +281,32 @@ export function PianoRoll({
       drag.moved = true;
     }
 
+    if (drag.mode === 'resize') {
+      // Only the end follows the pointer; pitch and start stay put.
+      const durationMs = Math.max(
+        MIN_NOTE_DURATION_MS,
+        drag.startDurationMs + geometry.msForX(dx),
+      );
+      return {
+        noteId: drag.noteId,
+        midi: drag.startMidi,
+        startMs: drag.startMs,
+        durationMs,
+      };
+    }
+
     // Delta-based rather than absolute: the note moves by how far the pointer
     // travelled, so grabbing a note anywhere on its body feels anchored.
     const midi = clampMidiToRange(
       drag.startMidi - Math.round(dy / rowHeight),
     );
     const startMs = Math.max(0, drag.startMs + geometry.msForX(dx));
-    return { noteId: drag.noteId, midi, startMs };
+    return {
+      noteId: drag.noteId,
+      midi,
+      startMs,
+      durationMs: drag.startDurationMs,
+    };
   };
 
   const handleNotePointerMove = (event: React.PointerEvent<SVGRectElement>) => {
@@ -271,8 +324,15 @@ export function PianoRoll({
     // A press that never crossed the threshold is a selection, already done
     // on pointerdown. Only a real drag commits an edit.
     if (target && drag.moved) {
-      editor.onMove(drag.noteId, target.midi, target.startMs);
-      announce(`Moved to ${midiToName(target.midi)}, ${(target.startMs / 1000).toFixed(2)} seconds`);
+      if (drag.mode === 'resize') {
+        editor.onResize(drag.noteId, target.durationMs);
+        announce(`Length ${(target.durationMs / 1000).toFixed(2)} seconds`);
+      } else {
+        editor.onMove(drag.noteId, target.midi, target.startMs);
+        announce(
+          `Moved to ${midiToName(target.midi)}, ${(target.startMs / 1000).toFixed(2)} seconds`,
+        );
+      }
     }
   };
 
@@ -316,6 +376,20 @@ export function PianoRoll({
       case 'ArrowRight':
         startMs = startMs + nudge;
         break;
+      // Brackets rather than a modifier+arrow: Alt+Arrow is browser
+      // back/forward, and Shift+Arrow is already the fine time nudge.
+      case '[':
+      case ']': {
+        event.preventDefault();
+        const step = event.shiftKey ? FINE_NUDGE_MS : NUDGE_MS;
+        const durationMs = Math.max(
+          MIN_NOTE_DURATION_MS,
+          note.durationMs + (event.key === ']' ? step : -step),
+        );
+        editor.onResize(note.id, durationMs);
+        announce(`Length ${(durationMs / 1000).toFixed(2)} seconds`);
+        return;
+      }
       case 'Delete':
       case 'Backspace':
         event.preventDefault();
@@ -405,39 +479,68 @@ export function PianoRoll({
               preview && scoreNote && preview.noteId === scoreNote.id;
             const midi = dragged ? preview.midi : note.midi;
             const startMs = dragged ? preview.startMs : note.startMs;
+            const durationMs = dragged ? preview.durationMs : note.durationMs;
+
+            const x = geometry.xForMs(startMs);
+            const width = Math.max(3, geometry.widthForMs(durationMs));
+            const selected = scoreNote != null && selectedId === scoreNote.id;
 
             return (
-              <rect
-                key={scoreNote?.id ?? `${note.startMs}-${index}`}
-                className="piano-roll__note"
-                data-editable={editor ? true : undefined}
-                data-selected={
-                  scoreNote && selectedId === scoreNote.id ? true : undefined
-                }
-                data-dragging={dragged || undefined}
-                x={geometry.xForMs(startMs)}
-                y={geometry.yForMidi(midi) + 1}
-                width={Math.max(3, geometry.widthForMs(note.durationMs))}
-                height={rowHeight - 2}
-                rx={2}
-                // Confidence as opacity, so a shaky transcription looks shaky
-                // rather than as definite as a clean one. Dragging goes solid.
-                opacity={dragged ? 1 : 0.45 + 0.55 * Math.min(1, note.confidence)}
-                {...(editor && scoreNote
-                  ? {
-                      tabIndex: 0,
-                      role: 'button',
-                      'aria-label': `Note ${describeNote(note)}. Arrow keys move, Delete removes.`,
-                      onPointerDown: (event) =>
-                        handleNotePointerDown(event, scoreNote),
-                      onPointerMove: handleNotePointerMove,
-                      onPointerUp: handleNotePointerUp,
-                      onPointerCancel: handleNotePointerCancel,
-                      onKeyDown: (event) => handleNoteKeyDown(event, scoreNote),
-                      onFocus: () => setSelectedId(scoreNote.id),
+              <g key={scoreNote?.id ?? `${note.startMs}-${index}`}>
+                <rect
+                  className="piano-roll__note"
+                  data-editable={editor ? true : undefined}
+                  data-selected={selected || undefined}
+                  data-dragging={dragged || undefined}
+                  x={x}
+                  y={geometry.yForMidi(midi) + 1}
+                  width={width}
+                  height={rowHeight - 2}
+                  rx={2}
+                  // Confidence as opacity, so a shaky transcription looks shaky
+                  // rather than as definite as a clean one. Dragging goes solid.
+                  opacity={dragged ? 1 : 0.45 + 0.55 * Math.min(1, note.confidence)}
+                  {...(editor && scoreNote
+                    ? {
+                        tabIndex: 0,
+                        role: 'button',
+                        'aria-label': `Note ${describeNote(note)}. Arrow keys move, brackets change length, Delete removes.`,
+                        onPointerDown: (event) =>
+                          beginDrag(event, scoreNote, 'move'),
+                        onPointerMove: handleNotePointerMove,
+                        onPointerUp: handleNotePointerUp,
+                        onPointerCancel: handleNotePointerCancel,
+                        onKeyDown: (event) => handleNoteKeyDown(event, scoreNote),
+                        onFocus: () => setSelectedId(scoreNote.id),
+                      }
+                    : {})}
+                />
+
+                {/*
+                  The resize grip, on the selected note only — showing one on
+                  every note would cover short notes in targets and make plain
+                  dragging unreliable. It straddles the end so the edge itself
+                  is grabbable, capped against the note's width so a short note
+                  keeps enough body left to drag.
+                */}
+                {editor && scoreNote && selected && (
+                  <rect
+                    className="piano-roll__handle"
+                    x={x + width - Math.min(HANDLE_WIDTH_PX, width * 0.6) / 2}
+                    y={geometry.yForMidi(midi) + 1}
+                    width={Math.min(HANDLE_WIDTH_PX, width * 0.6)}
+                    height={rowHeight - 2}
+                    role="button"
+                    aria-label={`Change length of ${midiToName(note.midi)}`}
+                    onPointerDown={(event) =>
+                      beginDrag(event, scoreNote, 'resize')
                     }
-                  : {})}
-              />
+                    onPointerMove={handleNotePointerMove}
+                    onPointerUp={handleNotePointerUp}
+                    onPointerCancel={handleNotePointerCancel}
+                  />
+                )}
+              </g>
             );
           })}
 
@@ -479,7 +582,8 @@ export function PianoRoll({
             </>
           ) : (
             <span className="piano-roll__hint">
-              Drag notes to move them. Double-click empty space to add one.
+              Drag notes to move them. Select one to drag its end and change
+              its length. Double-click empty space to add a note.
             </span>
           )}
         </div>

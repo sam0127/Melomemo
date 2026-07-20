@@ -517,6 +517,18 @@ h2 {
   cursor: grabbing;
 }
 
+.piano-roll__handle {
+  fill: var(--focus);
+  cursor: ew-resize;
+  rx: 2;
+}
+
+.piano-roll__handle:focus-visible {
+  outline: none;
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+
 .piano-roll__note[data-selected] {
   stroke: var(--focus);
   stroke-width: 2;

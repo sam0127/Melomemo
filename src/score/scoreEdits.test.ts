@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { AnalysisRecord, ScoreDocument } from '../core/types.ts';
-import { addNote, moveNote, removeNote, seedScoreFromAnalysis } from './scoreEdits.ts';
+import {
+  MIN_NOTE_DURATION_MS,
+  addNote,
+  moveNote,
+  removeNote,
+  resizeNote,
+  seedScoreFromAnalysis,
+} from './scoreEdits.ts';
 
 function makeAnalysis(): AnalysisRecord {
   return {
@@ -117,6 +124,42 @@ describe('addNote', () => {
     const empty: ScoreDocument = { ...seeded(), notes: [] };
     const { created } = addNote(empty, 60, 0);
     expect(created.durationMs).toBe(300);
+  });
+});
+
+describe('resizeNote', () => {
+  it('changes the length without moving the note', () => {
+    const score = seeded();
+    const note = score.notes[0]!;
+    const next = resizeNote(score, note.id, 900);
+    const resized = next.notes.find((n) => n.id === note.id)!;
+
+    expect(resized.durationMs).toBe(900);
+    // Only the end moves — a resize that shifted the start would feel like a
+    // drag of the whole note.
+    expect(resized.startMs).toBe(note.startMs);
+    expect(resized.midi).toBe(note.midi);
+  });
+
+  it('refuses to shrink a note into invisibility', () => {
+    const score = seeded();
+    const id = score.notes[0]!.id;
+    // Below the floor a note is unseeable and inaudible, so a resize would
+    // look like it had deleted it.
+    const next = resizeNote(score, id, 1);
+    expect(next.notes.find((n) => n.id === id)!.durationMs).toBe(
+      MIN_NOTE_DURATION_MS,
+    );
+  });
+
+  it('marks the score edited', () => {
+    const score = { ...seeded(), userEdited: false };
+    expect(resizeNote(score, score.notes[0]!.id, 600).userEdited).toBe(true);
+  });
+
+  it('ignores unknown ids', () => {
+    const score = seeded();
+    expect(resizeNote(score, 'nope', 600)).toBe(score);
   });
 });
 

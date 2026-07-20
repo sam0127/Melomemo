@@ -110,9 +110,16 @@ keyboard equivalent, because a drag-only editor is unusable without a pointer:
 | --- | --- | --- |
 | Move pitch | Drag up/down | Focus note, `↑` / `↓` |
 | Move in time | Drag left/right | `←` / `→` (hold `Shift` for 10 ms steps) |
+| Change length | Select, then drag the note's end | `[` / `]` (`Shift` for finer) |
 | Add | Double-click empty space | — |
 | Delete | Select, then **Delete note** | `Delete` or `Backspace` |
 | Deselect | — | `Escape` |
+
+Only the note's **end** resizes — dragging the start would shift the note in
+time, which is what moving is for. The resize grip appears on the selected note
+only; showing one on every note would blanket short notes in targets and make
+ordinary dragging unreliable. Brackets rather than `Alt`+arrows, which are
+browser back/forward.
 
 **The first edit forks the melody away from the machine.** Until then the
 transcription is what you see. From that moment a `ScoreDocument` exists and

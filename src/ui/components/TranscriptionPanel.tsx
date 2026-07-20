@@ -184,6 +184,7 @@ export function TranscriptionPanel({
             getPositionMs={notePlayback.positionMs}
             editor={{
               onMove: scoreApi.moveNote,
+              onResize: scoreApi.resizeNote,
               onCreate: scoreApi.createNote,
               onDelete: scoreApi.deleteNote,
             }}
