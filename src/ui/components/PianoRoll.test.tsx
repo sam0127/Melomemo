@@ -147,39 +147,81 @@ describe('PianoRoll playhead', () => {
     }
 
     it('pauses before the drag and seeks once on release', () => {
+      // jsdom reports a zero rect for the SVG, so client x maps straight to
+      // content x — the playhead goes to wherever the pointer is dragged.
       const { scrubber, container } = renderScrubbable(2000);
       const grab = container.querySelector('.piano-roll__playhead-grab')!;
       const geometry = createRollGeometry(NOTES, DURATION_MS);
-      const dx = geometry.widthForMs(3000);
+      const target = geometry.xForMs(5000);
 
-      fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: 100, clientY: 10 });
+      fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: geometry.xForMs(2000), clientY: 10 });
       // Pausing first is what keeps the audio from being torn down and
       // rebuilt on every frame of the drag.
       expect(scrubber.onScrubStart).toHaveBeenCalledTimes(1);
       expect(scrubber.onScrubEnd).not.toHaveBeenCalled();
 
-      fireEvent.pointerMove(grab, { pointerId: 1, clientX: 100 + dx, clientY: 10 });
-      fireEvent.pointerMove(grab, { pointerId: 1, clientX: 100 + dx, clientY: 10 });
+      fireEvent.pointerMove(grab, { pointerId: 1, clientX: target, clientY: 10 });
+      fireEvent.pointerMove(grab, { pointerId: 1, clientX: target, clientY: 10 });
       // Still nothing committed mid-drag.
       expect(scrubber.onScrubEnd).not.toHaveBeenCalled();
 
-      fireEvent.pointerUp(grab, { pointerId: 1, clientX: 100 + dx, clientY: 10 });
+      fireEvent.pointerUp(grab, { pointerId: 1, clientX: target, clientY: 10 });
       expect(scrubber.onScrubEnd).toHaveBeenCalledTimes(1);
       expect(vi.mocked(scrubber.onScrubEnd).mock.calls[0]![0]).toBeCloseTo(5000, 0);
     });
 
-    it('moves the playhead during the drag without waiting for release', () => {
+    it('moves the playhead to where the pointer is, not by how far it dragged', () => {
       const { container } = renderScrubbable(0);
       const grab = container.querySelector('.piano-roll__playhead-grab')!;
       const geometry = createRollGeometry(NOTES, DURATION_MS);
-      const dx = geometry.widthForMs(2500);
+      const target = geometry.xForMs(2500);
 
       fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: 0, clientY: 10 });
-      fireEvent.pointerMove(grab, { pointerId: 1, clientX: dx, clientY: 10 });
+      fireEvent.pointerMove(grab, { pointerId: 1, clientX: target, clientY: 10 });
 
+      // Absolute positioning is what lets an auto-scroll advance the playhead:
+      // scrolling moves the content under a still finger, so "where the pointer
+      // is" becomes a later time.
       expect(playhead(container).getAttribute('transform')).toBe(
         `translate(${geometry.xForMs(2500).toFixed(2)} 0)`,
       );
+    });
+
+    it('scrolls the chart when a scrub is held at the edge, carrying it on', () => {
+      // The point of the whole change: the playhead is drawn under the finger,
+      // so reaching a time outside the visible window is only possible if the
+      // chart scrolls itself while the finger sits at the edge.
+      const { container } = renderScrubbable(0);
+      const scroller = container.querySelector<HTMLElement>('.piano-roll__scroll')!;
+      Object.defineProperty(scroller, 'clientWidth', { value: 300, configurable: true });
+      Object.defineProperty(scroller, 'scrollWidth', { value: 1000, configurable: true });
+      const grab = container.querySelector('.piano-roll__playhead-grab')!;
+
+      fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: 150, clientY: 10 });
+      // Held near the right edge, then stopped.
+      fireEvent.pointerMove(grab, { pointerId: 1, clientX: 290, clientY: 10 });
+      expect(scroller.scrollLeft).toBe(0);
+
+      // The edge loop keeps going though the finger has not moved.
+      fireFrame();
+      fireFrame();
+      expect(scroller.scrollLeft).toBeGreaterThan(0);
+    });
+
+    it('stops the edge scroll once the pointer is released', () => {
+      const { container } = renderScrubbable(0);
+      const scroller = container.querySelector<HTMLElement>('.piano-roll__scroll')!;
+      Object.defineProperty(scroller, 'clientWidth', { value: 300, configurable: true });
+      Object.defineProperty(scroller, 'scrollWidth', { value: 1000, configurable: true });
+      const grab = container.querySelector('.piano-roll__playhead-grab')!;
+
+      fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: 290, clientY: 10 });
+      fireEvent.pointerUp(grab, { pointerId: 1, clientX: 290, clientY: 10 });
+
+      // No frames should remain scheduled, or the chart would scroll forever.
+      const scrolledBefore = scroller.scrollLeft;
+      fireFrame();
+      expect(scroller.scrollLeft).toBe(scrolledBefore);
     });
 
     it('never scrubs outside the recording', () => {

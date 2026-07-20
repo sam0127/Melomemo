@@ -77,6 +77,15 @@ const HANDLE_WIDTH_PX = 14;
 /** Invisible width around the playhead line that accepts a drag. */
 const PLAYHEAD_GRAB_PX = 18;
 
+/**
+ * How close to the viewport edge a scrub has to reach before the chart starts
+ * scrolling itself, and how fast it scrolls once there. The scroll advances
+ * the scrubbed position too, so dragging into this zone carries the playhead
+ * on to the end (or back to the start) even though the finger has stopped.
+ */
+const EDGE_SCROLL_ZONE_PX = 44;
+const EDGE_SCROLL_SPEED_PX = 14;
+
 interface DragState {
   noteId: string;
   pointerId: number;
@@ -102,9 +111,16 @@ interface DragPreview {
 
 interface ScrubState {
   pointerId: number;
-  originX: number;
-  startMs: number;
+  /** Where the playhead currently sits, for the commit on release. */
   currentMs: number;
+  /**
+   * The pointer's last viewport x. The edge-scroll loop re-reads the position
+   * from here every frame, so holding the finger at the edge keeps advancing
+   * as the view scrolls beneath it.
+   */
+  lastClientX: number;
+  /** The edge-scroll animation frame, cancelled on release. */
+  raf: number;
 }
 
 function describeNote(note: QuantizedNote): string {
@@ -467,17 +483,88 @@ export function PianoRoll({
     );
   };
 
+  /** Scrolls the chart so the playhead at `ms` is comfortably within view. */
+  const ensurePlayheadVisible = (ms: number) => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    const x = geometry.xForMs(ms);
+    const maxScroll = scroller.scrollWidth - scroller.clientWidth;
+    const margin = 24;
+    if (x < scroller.scrollLeft + margin) {
+      scroller.scrollLeft = Math.max(0, x - scroller.clientWidth / 3);
+    } else if (x > scroller.scrollLeft + scroller.clientWidth - margin) {
+      scroller.scrollLeft = Math.min(
+        maxScroll,
+        x - (scroller.clientWidth * 2) / 3,
+      );
+    }
+  };
+
+  /**
+   * Positions the playhead under the pointer in content space, scroll
+   * included.
+   *
+   * Absolute rather than by-delta so that scrolling the chart advances the
+   * position on its own: the SVG's left edge moves as the container scrolls,
+   * so the same finger maps to a later time once the view has moved. That is
+   * what lets the edge-scroll loop carry the playhead to the end.
+   */
+  const scrubTo = (clientX: number) => {
+    const scrub = scrubRef.current;
+    if (!scrub) return;
+    const svgLeft = svgRef.current!.getBoundingClientRect().left;
+    const contentX = Math.min(width, Math.max(0, clientX - svgLeft));
+    const ms = Math.min(geometry.totalMs, Math.max(0, geometry.msForX(contentX)));
+    scrub.currentMs = ms;
+    scrub.lastClientX = clientX;
+    // Written straight to the DOM: this runs per frame and must not re-render.
+    placePlayhead(ms);
+  };
+
+  /**
+   * Runs while a scrub is active. Scrolls the chart when the finger is held in
+   * an edge zone, then re-derives the position so the playhead keeps up. The
+   * playhead is always drawn under the finger, so scrolling is the only way to
+   * reach a time outside the currently visible window.
+   */
+  const edgeScrollStep = () => {
+    const scrub = scrubRef.current;
+    const scroller = scrollRef.current;
+    if (!scrub || !scroller) return;
+
+    const rect = scroller.getBoundingClientRect();
+    const viewportX = scrub.lastClientX - rect.left;
+    const maxScroll = scroller.scrollWidth - scroller.clientWidth;
+    let scrolled = false;
+
+    if (
+      viewportX > scroller.clientWidth - EDGE_SCROLL_ZONE_PX &&
+      scroller.scrollLeft < maxScroll
+    ) {
+      scroller.scrollLeft = Math.min(
+        maxScroll,
+        scroller.scrollLeft + EDGE_SCROLL_SPEED_PX,
+      );
+      scrolled = true;
+    } else if (viewportX < EDGE_SCROLL_ZONE_PX && scroller.scrollLeft > 0) {
+      scroller.scrollLeft = Math.max(0, scroller.scrollLeft - EDGE_SCROLL_SPEED_PX);
+      scrolled = true;
+    }
+
+    if (scrolled) scrubTo(scrub.lastClientX);
+    scrub.raf = requestAnimationFrame(edgeScrollStep);
+  };
+
   const handleScrubPointerDown = (event: React.PointerEvent<SVGRectElement>) => {
     if (!scrubber || event.button !== 0) return;
     event.stopPropagation();
     capture(event.currentTarget, event.pointerId);
 
-    const startMs = getPositionMs?.() ?? 0;
     scrubRef.current = {
       pointerId: event.pointerId,
-      originX: event.clientX,
-      startMs,
-      currentMs: startMs,
+      currentMs: getPositionMs?.() ?? 0,
+      lastClientX: event.clientX,
+      raf: requestAnimationFrame(edgeScrollStep),
     };
     // Pausing first means the audio isn't rescheduled on every frame of the
     // drag — seeking tears down and rebuilds every voice.
@@ -485,21 +572,14 @@ export function PianoRoll({
   };
 
   const handleScrubPointerMove = (event: React.PointerEvent<SVGRectElement>) => {
-    const scrub = scrubRef.current;
-    if (!scrub) return;
-    const ms = Math.min(
-      geometry.totalMs,
-      Math.max(0, scrub.startMs + geometry.msForX(event.clientX - scrub.originX)),
-    );
-    scrub.currentMs = ms;
-    // Written straight to the DOM: this runs per pointermove and must not
-    // re-render the list.
-    placePlayhead(ms);
+    if (!scrubRef.current) return;
+    scrubTo(event.clientX);
   };
 
   const handleScrubPointerUp = () => {
     const scrub = scrubRef.current;
     if (!scrub || !scrubber) return;
+    cancelAnimationFrame(scrub.raf);
     scrubRef.current = null;
     scrubber.onScrubEnd(scrub.currentMs);
     announce(`Playhead at ${formatSeconds(scrub.currentMs)}`);
@@ -522,6 +602,9 @@ export function PianoRoll({
     scrubber.onScrubStart();
     scrubber.onScrubEnd(clamped);
     placePlayhead(clamped);
+    // End/ArrowRight can take the playhead past the visible window; keep it in
+    // view, the same way a pointer scrub does.
+    ensurePlayheadVisible(clamped);
     announce(`Playhead at ${formatSeconds(clamped)}`);
   };
 

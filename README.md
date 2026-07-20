@@ -99,8 +99,11 @@ at a time.
 The playhead tracks through the roll and auto-scrolls to follow, stays visible
 when paused so the resume point is obvious, and can be dragged to play from
 anywhere. Dragging it pauses first and seeks once on release rather than
-rebuilding the audio graph on every frame. Arrow keys, `Home`, and `End` seek
-it from the keyboard.
+rebuilding the audio graph on every frame. Dragging toward either edge scrolls
+the chart, carrying the playhead on to the end (or back to the start) — the
+playhead is drawn under the finger, so scrolling is the only way to reach a
+time outside the visible window. Arrow keys, `Home`, and `End` seek it from the
+keyboard.
 
 The piano roll's coordinate maths lives in
 [`src/ui/pianoRollGeometry.ts`](src/ui/pianoRollGeometry.ts) with both forward
