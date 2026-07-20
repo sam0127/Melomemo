@@ -140,13 +140,16 @@ export function TranscriptionPanel({
             way to judge it — a wrong note is far more obvious played back than
             read as a letter.
           */}
+          {/*
+            Icon-only, so the accessible name is the only thing carrying the
+            meaning — it has to say which memo, since several rows can be open
+            at once.
+          */}
           <div className="transcription__transport" role="group" aria-label="Note playback">
             <button
               type="button"
-              className="button"
+              className="button button--icon"
               aria-label={
-                // Mirrors the visible text exactly — the paused state was
-                // announcing "Play" while showing "Resume".
                 isPlayingNotes
                   ? `Pause notes for ${memo.title}`
                   : isPaused
@@ -155,19 +158,17 @@ export function TranscriptionPanel({
               }
               onClick={() => notePlayback.toggle(memo, notes)}
             >
-              <span aria-hidden="true">{isPlayingNotes ? '❚❚' : '▶'}</span>{' '}
-              {isPlayingNotes ? 'Pause' : isPaused ? 'Resume' : 'Play notes'}
+              <span aria-hidden="true">{isPlayingNotes ? '❚❚' : '▶'}</span>
             </button>
             <button
               type="button"
-              className="button"
-              aria-label={`Restart notes for ${memo.title}`}
-              // Idle already means the playhead is at the start, so there is
-              // nothing for this to do.
+              className="button button--icon"
+              aria-label={`Stop notes for ${memo.title}`}
+              // Idle already means stopped at the start.
               disabled={transportStatus === 'idle'}
-              onClick={() => notePlayback.restart(memo, notes)}
+              onClick={notePlayback.stop}
             >
-              <span aria-hidden="true">↺</span> Restart
+              <span aria-hidden="true">■</span>
             </button>
           </div>
 
@@ -180,8 +181,12 @@ export function TranscriptionPanel({
               frameSizeSamples: analysis.input.frameSizeSamples,
             }}
             durationMs={memo.capture.durationMs}
-            isPlaying={isPlayingNotes}
+            transport={transportStatus}
             getPositionMs={notePlayback.positionMs}
+            scrubber={{
+              onScrubStart: () => notePlayback.beginScrub(memo, notes),
+              onScrubEnd: (ms) => notePlayback.endScrub(memo, notes, ms),
+            }}
             editor={{
               onMove: scoreApi.moveNote,
               onResize: scoreApi.resizeNote,

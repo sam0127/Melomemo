@@ -221,6 +221,50 @@ export class TonePlayer {
     }, remainingMs + LEAD_S * 1000 + 50);
   }
 
+  /**
+   * Arms a memo without sounding it, so its playhead can be scrubbed before
+   * anything has been played. Loading a different memo replaces the current
+   * one; re-loading the same one leaves the position alone, or dragging the
+   * playhead would jump back to the start on every render.
+   */
+  load(memoId: string, notes: QuantizedNote[]): void {
+    if (this.#memoId === memoId) {
+      this.#notes = notes;
+      this.#durationMs = TonePlayer.durationOf(notes);
+      return;
+    }
+    this.#silence();
+    this.#notes = notes;
+    this.#durationMs = TonePlayer.durationOf(notes);
+    this.#offsetMs = 0;
+    // 'paused' rather than 'idle': idle means the transport holds nothing, and
+    // this memo is now cued at a position, ready for play to resume from it.
+    this.#emit('paused', memoId);
+  }
+
+  /**
+   * Moves the playhead. While playing, the sequence is rescheduled from the
+   * new position; otherwise only the resume point moves.
+   *
+   * Rescheduling tears down and rebuilds every voice, so callers scrubbing
+   * continuously should pause first and seek once on release rather than
+   * calling this per frame.
+   */
+  seek(ms: number): void {
+    if (!this.#memoId) return;
+    const clamped = Math.min(this.#durationMs, Math.max(0, ms));
+
+    if (this.#status === 'playing') {
+      void this.play(this.#memoId, this.#notes, clamped);
+      return;
+    }
+
+    this.#offsetMs = clamped;
+    // Idle means "at the start with nothing cued", which is no longer true.
+    if (this.#status === 'idle') this.#emit('paused', this.#memoId);
+    else this.#emit(this.#status, this.#memoId);
+  }
+
   /** Holds position so `resume` can continue from it. */
   pause(): void {
     if (this.#status !== 'playing') return;

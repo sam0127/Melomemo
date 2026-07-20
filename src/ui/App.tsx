@@ -31,6 +31,8 @@ export function App() {
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  /** Whether a scrub interrupted playback that should resume when it ends. */
+  const scrubResumeRef = useRef(false);
 
   const { message, announce } = useAnnouncer();
   const [notice, setNotice] = useState<string | null>(null);
@@ -168,9 +170,30 @@ export function App() {
         void tonePlayer.play(memo.id, [...notes]);
       },
 
-      restart: (memo, notes) => {
-        playback.pause();
-        void tonePlayer.play(memo.id, [...notes], 0);
+      stop: () => tonePlayer.stop(),
+
+      beginScrub: (memo, notes) => {
+        if (tonePlayer.currentMemoId !== memo.id) {
+          // Scrubbing a different memo's playhead takes the transport over.
+          tonePlayer.load(memo.id, [...notes]);
+          scrubResumeRef.current = false;
+          return;
+        }
+        // Remembered so the scrub can put playback back as it found it.
+        scrubResumeRef.current = tonePlayer.status === 'playing';
+        if (scrubResumeRef.current) tonePlayer.pause();
+      },
+
+      endScrub: (memo, notes, ms) => {
+        if (tonePlayer.currentMemoId !== memo.id) {
+          tonePlayer.load(memo.id, [...notes]);
+        }
+        tonePlayer.seek(ms);
+        if (scrubResumeRef.current) {
+          scrubResumeRef.current = false;
+          playback.pause();
+          void tonePlayer.resume();
+        }
       },
 
       positionMs: () => tonePlayer.positionMs,

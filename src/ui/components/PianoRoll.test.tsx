@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuantizedNote } from '../../core/types.ts';
 import { createRollGeometry } from '../pianoRollGeometry.ts';
@@ -40,20 +40,52 @@ describe('PianoRoll playhead', () => {
   }
 
   function playhead(container: HTMLElement): SVGGElement {
-    return container.querySelector('g[aria-hidden]')!;
+    return container.querySelector('.piano-roll__playhead')!;
   }
 
-  it('stays hidden when not playing', () => {
+  it('stays hidden on an idle chart that cannot be scrubbed', () => {
     const { container } = render(
       <PianoRoll
         notes={NOTES}
         durationMs={DURATION_MS}
-        isPlaying={false}
+        transport="idle"
         getPositionMs={() => 0}
       />,
     );
     expect(playhead(container).style.display).toBe('none');
     expect(rafCallbacks).toHaveLength(0);
+  });
+
+  it('stays visible when paused, showing where playback will resume', () => {
+    // The reason it is drawn at rest: the resume point has to be visible.
+    const { container } = render(
+      <PianoRoll
+        notes={NOTES}
+        durationMs={DURATION_MS}
+        transport="paused"
+        getPositionMs={() => 4000}
+      />,
+    );
+    const geometry = createRollGeometry(NOTES, DURATION_MS);
+    expect(playhead(container).style.display).not.toBe('none');
+    expect(playhead(container).getAttribute('transform')).toBe(
+      `translate(${geometry.xForMs(4000).toFixed(2)} 0)`,
+    );
+    // Nothing is moving, so no animation frames should be burned.
+    expect(rafCallbacks).toHaveLength(0);
+  });
+
+  it('is shown at rest when scrubbable, so there is something to grab', () => {
+    const { container } = render(
+      <PianoRoll
+        notes={NOTES}
+        durationMs={DURATION_MS}
+        transport="idle"
+        getPositionMs={() => 0}
+        scrubber={{ onScrubStart: () => {}, onScrubEnd: () => {} }}
+      />,
+    );
+    expect(playhead(container).style.display).not.toBe('none');
   });
 
   it('moves to the position the player reports, in the renderer’s own geometry', () => {
@@ -62,7 +94,7 @@ describe('PianoRoll playhead', () => {
       <PianoRoll
         notes={NOTES}
         durationMs={DURATION_MS}
-        isPlaying={true}
+        transport="playing"
         getPositionMs={() => position}
       />,
     );
@@ -89,7 +121,7 @@ describe('PianoRoll playhead', () => {
       <PianoRoll
         notes={NOTES}
         durationMs={DURATION_MS}
-        isPlaying={true}
+        transport="playing"
         getPositionMs={() => 0}
       />,
     );
@@ -99,18 +131,94 @@ describe('PianoRoll playhead', () => {
     expect(rafCallbacks.length).toBeGreaterThan(0);
   });
 
+  describe('scrubbing', () => {
+    function renderScrubbable(position = 0) {
+      const scrubber = { onScrubStart: vi.fn(), onScrubEnd: vi.fn() };
+      const utils = render(
+        <PianoRoll
+          notes={NOTES}
+          durationMs={DURATION_MS}
+          transport="paused"
+          getPositionMs={() => position}
+          scrubber={scrubber}
+        />,
+      );
+      return { scrubber, ...utils };
+    }
+
+    it('pauses before the drag and seeks once on release', () => {
+      const { scrubber, container } = renderScrubbable(2000);
+      const grab = container.querySelector('.piano-roll__playhead-grab')!;
+      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      const dx = geometry.widthForMs(3000);
+
+      fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: 100, clientY: 10 });
+      // Pausing first is what keeps the audio from being torn down and
+      // rebuilt on every frame of the drag.
+      expect(scrubber.onScrubStart).toHaveBeenCalledTimes(1);
+      expect(scrubber.onScrubEnd).not.toHaveBeenCalled();
+
+      fireEvent.pointerMove(grab, { pointerId: 1, clientX: 100 + dx, clientY: 10 });
+      fireEvent.pointerMove(grab, { pointerId: 1, clientX: 100 + dx, clientY: 10 });
+      // Still nothing committed mid-drag.
+      expect(scrubber.onScrubEnd).not.toHaveBeenCalled();
+
+      fireEvent.pointerUp(grab, { pointerId: 1, clientX: 100 + dx, clientY: 10 });
+      expect(scrubber.onScrubEnd).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(scrubber.onScrubEnd).mock.calls[0]![0]).toBeCloseTo(5000, 0);
+    });
+
+    it('moves the playhead during the drag without waiting for release', () => {
+      const { container } = renderScrubbable(0);
+      const grab = container.querySelector('.piano-roll__playhead-grab')!;
+      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      const dx = geometry.widthForMs(2500);
+
+      fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: 0, clientY: 10 });
+      fireEvent.pointerMove(grab, { pointerId: 1, clientX: dx, clientY: 10 });
+
+      expect(playhead(container).getAttribute('transform')).toBe(
+        `translate(${geometry.xForMs(2500).toFixed(2)} 0)`,
+      );
+    });
+
+    it('never scrubs outside the recording', () => {
+      const { scrubber, container } = renderScrubbable(0);
+      const grab = container.querySelector('.piano-roll__playhead-grab')!;
+
+      fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: 0, clientY: 10 });
+      fireEvent.pointerMove(grab, { pointerId: 1, clientX: -5000, clientY: 10 });
+      fireEvent.pointerUp(grab, { pointerId: 1, clientX: -5000, clientY: 10 });
+
+      expect(vi.mocked(scrubber.onScrubEnd).mock.calls[0]![0]).toBe(0);
+    });
+
+    it('is a slider for assistive tech, with keyboard seeking', () => {
+      const { scrubber, container } = renderScrubbable(1000);
+      const grab = container.querySelector('.piano-roll__playhead-grab')!;
+      expect(grab.getAttribute('role')).toBe('slider');
+      expect(grab.getAttribute('aria-valuenow')).toBe('1000');
+
+      fireEvent.keyDown(grab, { key: 'ArrowRight' });
+      expect(scrubber.onScrubEnd).toHaveBeenCalledWith(1250);
+
+      fireEvent.keyDown(grab, { key: 'Home' });
+      expect(scrubber.onScrubEnd).toHaveBeenCalledWith(0);
+    });
+  });
+
   it('scrolls to follow the playhead only once it leaves the visible window', () => {
     let position = 0;
     const { container } = render(
       <PianoRoll
         notes={NOTES}
         durationMs={DURATION_MS}
-        isPlaying={true}
+        transport="playing"
         getPositionMs={() => position}
       />,
     );
 
-    const scroller = container.querySelector<HTMLElement>('.piano-roll')!;
+    const scroller = container.querySelector<HTMLElement>('.piano-roll__scroll')!;
     // jsdom reports zero layout; give the scroller a real viewport width.
     Object.defineProperty(scroller, 'clientWidth', { value: 500 });
 

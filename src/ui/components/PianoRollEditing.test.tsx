@@ -28,7 +28,7 @@ function renderRoll(notes: ScoreNote[] = NOTES) {
     <PianoRoll
       notes={notes}
       durationMs={DURATION_MS}
-      isPlaying={false}
+      transport="idle"
       editor={editor}
     />,
   );
@@ -166,7 +166,9 @@ describe('pointer editing', () => {
 
   it('creates a note where empty space is double-clicked', () => {
     const { editor, container } = renderRoll();
-    const svg = container.querySelector('svg')!;
+    // Not querySelector('svg'): the pitch-label gutter is an svg too, and it
+    // comes first in the DOM.
+    const svg = container.querySelector('.piano-roll__svg')!;
     const geometry = createRollGeometry(NOTES, DURATION_MS);
 
     // jsdom reports a zero rect, so client coords are svg coords directly.
@@ -303,9 +305,11 @@ describe('pointer editing', () => {
 
     it('does not interfere when the roll is read-only', () => {
       const { container } = render(
-        <PianoRoll notes={NOTES} durationMs={DURATION_MS} isPlaying={false} />,
+        <PianoRoll notes={NOTES} durationMs={DURATION_MS} transport="idle" />,
       );
       const rect = container.querySelector('.piano-roll__note')!;
+      // Nothing is draggable, so trapping the touch would only make the chart
+      // harder to scroll.
       expect(dispatchTouch(rect, 'touchstart')).toBe(false);
     });
   });

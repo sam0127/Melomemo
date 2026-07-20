@@ -223,6 +223,68 @@ describe('TonePlayer transport', () => {
     expect(player.positionMs).toBe(0);
   });
 
+  describe('seeking', () => {
+    it('cues a memo without sounding it', () => {
+      const player = new TonePlayer();
+      player.load('memo-1', notes(60, 62));
+
+      // Nothing audible yet — but the transport now holds the memo, so its
+      // playhead can be scrubbed before anything has played.
+      expect(FakeAudioContext.instances).toHaveLength(0);
+      expect(player.currentMemoId).toBe('memo-1');
+      expect(player.status).toBe('paused');
+      expect(player.positionMs).toBe(0);
+    });
+
+    it('leaves the position alone when the same memo is re-loaded', () => {
+      const player = new TonePlayer();
+      player.load('memo-1', notes(60, 62));
+      player.seek(400);
+
+      // Re-rendering must not drag the playhead back to the start.
+      player.load('memo-1', notes(60, 62));
+      expect(player.positionMs).toBe(400);
+    });
+
+    it('moves the resume point when not playing', () => {
+      const player = new TonePlayer();
+      player.load('memo-1', notes(60, 62, 64));
+      player.seek(700);
+      expect(player.positionMs).toBe(700);
+      expect(player.status).toBe('paused');
+    });
+
+    it('reschedules from the new position when playing', async () => {
+      const player = new TonePlayer();
+      await player.play('memo-1', notes(60, 62, 64));
+      const before = context().oscillators.length;
+
+      player.seek(1000);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Only the note at 1000ms onwards is rebuilt.
+      expect(context().oscillators.length).toBeGreaterThan(before);
+      expect(player.status).toBe('playing');
+    });
+
+    it('clamps to the bounds of the sequence', () => {
+      const player = new TonePlayer();
+      player.load('memo-1', notes(60, 62)); // ends at 900ms
+      player.seek(-500);
+      expect(player.positionMs).toBe(0);
+      player.seek(999_999);
+      expect(player.positionMs).toBe(TonePlayer.durationOf(notes(60, 62)));
+    });
+
+    it('ignores a seek when nothing is loaded', () => {
+      const player = new TonePlayer();
+      player.seek(500);
+      expect(player.status).toBe('idle');
+      expect(player.currentMemoId).toBeNull();
+    });
+  });
+
   it('does nothing for an empty transcription', async () => {
     const player = new TonePlayer();
     await player.play('memo-1', []);

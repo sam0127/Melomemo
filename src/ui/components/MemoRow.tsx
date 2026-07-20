@@ -76,7 +76,6 @@ export function MemoRow({
   const playLabel = isCurrent && isPlaying ? 'Pause' : 'Play';
   const summary = transcriptionSummary(memo, isTranscribing);
   const status = memo.analysisState?.status;
-  const hasTranscription = status === 'ok' || isTranscribing;
   /*
    * Imported memos, ones recorded before transcription existed, and ones whose
    * analysis failed all need a way back in — otherwise a single failure leaves
@@ -151,6 +150,23 @@ export function MemoRow({
       // deleted; the list stays a plain ul/li with no wrapper elements.
       data-memo-id={memo.id}
       data-current={isCurrent || undefined}
+      data-open={showTranscription || undefined}
+      /*
+       * The whole row is a tap target for opening the memo, but it also holds
+       * buttons and a form. A click that originated in one of those is that
+       * control's, not the row's — without this check, playing a memo or
+       * confirming a delete would also toggle the panel.
+       *
+       * This is a pointer convenience only. Keyboard and assistive tech go
+       * through the title button below, which is a real control and carries
+       * the expanded state.
+       */
+      onClick={(event) => {
+        if ((event.target as Element).closest('button, input, form, .transcription')) {
+          return;
+        }
+        setShowTranscription((open) => !open);
+      }}
     >
       <button
         type="button"
@@ -165,7 +181,37 @@ export function MemoRow({
       </button>
 
       <div className="memo-row__meta">
-        <span className="memo-row__title">{memo.title}</span>
+        <div className="memo-row__titlerow">
+          <button
+            type="button"
+            className="memo-row__title"
+            aria-expanded={showTranscription}
+            onClick={() => setShowTranscription((open) => !open)}
+          >
+            {memo.title}
+          </button>
+          <button
+            type="button"
+            ref={renameButtonRef}
+            className="memo-row__rename-button"
+            aria-label={`Rename ${memo.title}`}
+            onClick={beginEditing}
+          >
+            {/* Decorative: the accessible name is on the button. */}
+            <svg
+              viewBox="0 0 16 16"
+              width="14"
+              height="14"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                d="M11.6 1.6a1.4 1.4 0 0 1 2 2l-.9.9-2-2 .9-.9ZM9.8 3.4l2 2L5 12.2l-2.6.6.6-2.6 6.8-6.8Z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        </div>
         <span className="memo-row__sub">
           {formatTimestamp(memo.createdAt)}
           {' · '}
@@ -216,26 +262,6 @@ export function MemoRow({
               {status === 'failed' ? 'Retry' : 'Transcribe'}
             </button>
           )}
-          {hasTranscription && (
-            <button
-              type="button"
-              className="button"
-              aria-expanded={showTranscription}
-              aria-label={`${showTranscription ? 'Hide' : 'Show'} transcription for ${memo.title}`}
-              onClick={() => setShowTranscription((open) => !open)}
-            >
-              Notes
-            </button>
-          )}
-          <button
-            type="button"
-            ref={renameButtonRef}
-            className="button"
-            aria-label={`Rename ${memo.title}`}
-            onClick={beginEditing}
-          >
-            Rename
-          </button>
           <button
             type="button"
             className="button"

@@ -90,11 +90,17 @@ Parameters worth turning when a real recording transcribes badly all live in
 for its value. **Bump `mpmEngine.version` after changing any of them** — that's
 what marks existing transcriptions stale so they can be recomputed.
 
-**Play notes** synthesises the transcription as tones, separately from the
-original recording — hearing the two back to back is the quickest way to judge
-whether a transcription is right. Playback can be paused, resumed, and
-restarted, and a playhead tracks through the piano roll, which auto-scrolls to
-follow it. Only one of the two audio sources plays at a time.
+Tap a memo to open it. **Play** synthesises the transcription as tones,
+separately from the original recording — hearing the two back to back is the
+quickest way to judge whether a transcription is right. Playback pauses and
+resumes; **stop** rewinds to the start. Only one of the two audio sources plays
+at a time.
+
+The playhead tracks through the roll and auto-scrolls to follow, stays visible
+when paused so the resume point is obvious, and can be dragged to play from
+anywhere. Dragging it pauses first and seeks once on release rather than
+rebuilding the audio graph on every frame. Arrow keys, `Home`, and `End` seek
+it from the keyboard.
 
 The piano roll's coordinate maths lives in
 [`src/ui/pianoRollGeometry.ts`](src/ui/pianoRollGeometry.ts) with both forward

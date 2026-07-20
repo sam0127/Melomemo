@@ -317,9 +317,74 @@ h2 {
   cursor: default;
 }
 
+.memo-row__titlerow {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+/*
+ * A button, not a span: tapping the row is a pointer convenience, and keyboard
+ * and screen-reader users need a real control that carries the expanded state.
+ * Styled flat so it still reads as the row's title.
+ */
 .memo-row__title {
+  min-width: 0;
+  padding: 0;
+  font: inherit;
   font-weight: 600;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
   overflow-wrap: anywhere;
+}
+
+.memo-row__rename-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Smaller than the 44px minimum for a primary control, but it sits inside
+     the row, which is itself the large tap target for opening the memo. */
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.memo-row__rename-button:hover {
+  color: var(--text);
+  background: var(--surface-alt);
+}
+
+.memo-row[data-open] {
+  border-color: var(--accent);
+}
+
+/* The row is clickable, but only where nothing else claims the click. */
+.memo-row {
+  cursor: pointer;
+}
+
+.memo-row__actions,
+.memo-row__confirm,
+.memo-row__play,
+.transcription {
+  cursor: auto;
+}
+
+.button--icon {
+  /* Square, since the glyph carries no width of its own. */
+  width: 2.75rem;
+  padding: 0;
+  font-size: 0.9375rem;
 }
 
 .memo-row__sub {
@@ -445,24 +510,51 @@ h2 {
 }
 
 .piano-roll {
+  /* Fixed pitch labels beside a horizontally scrolling chart. */
+  display: flex;
+  max-width: 100%;
+  margin-top: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.piano-roll__keys {
+  flex: none;
+  display: block;
+  border-right: 1px solid var(--border);
+}
+
+.piano-roll__key {
+  fill: var(--surface);
+}
+
+.piano-roll__key--accidental {
+  fill: color-mix(in srgb, var(--text) 8%, var(--surface));
+}
+
+.piano-roll__key-label {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  fill: var(--text-muted);
+}
+
+.piano-roll__scroll {
   overflow-x: auto;
   /* Belt and braces: the chart must never be the thing that widens the page. */
-  max-width: 100%;
+  min-width: 0;
   /*
    * Both axes, not just x. A vertical drag inside the roll would otherwise
    * chain to the page and trigger Android's pull-to-refresh.
    */
   overscroll-behavior: contain;
-  margin-top: 0.5rem;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
 }
 
 /* Keyboard users need to be able to reach the scroll area itself. */
-.piano-roll:focus-visible {
+.piano-roll__scroll:focus-visible {
   outline: 3px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -3px;
 }
 
 .piano-roll__svg {
@@ -487,11 +579,31 @@ h2 {
 }
 
 .piano-roll__playhead {
+  /* The group is moved by a transform every frame; letting the browser hoist
+     it to its own layer keeps that off the main paint path. */
+  will-change: transform;
+}
+
+.piano-roll__playhead-line {
   stroke: var(--focus);
   stroke-width: 2;
-  /* The line is moved by a transform every frame; letting the browser hoist it
-     to its own layer keeps that off the main paint path. */
-  will-change: transform;
+  pointer-events: none;
+}
+
+.piano-roll__playhead-head {
+  fill: var(--focus);
+  pointer-events: none;
+}
+
+/* Invisible, but it is the thing the pointer actually grabs. */
+.piano-roll__playhead-grab {
+  fill: transparent;
+  cursor: ew-resize;
+}
+
+.piano-roll__playhead-grab:focus-visible {
+  outline: none;
+  fill: color-mix(in srgb, var(--focus) 22%, transparent);
 }
 
 .piano-roll__note[data-editable] {

@@ -35,7 +35,7 @@ function makeMemo(overrides: Partial<Memo> = {}): Memo {
 function renderRow(props: Partial<Parameters<typeof MemoRow>[0]> = {}) {
   const onRename = vi.fn();
   const memo = makeMemo();
-  render(
+  const utils = render(
     <ul>
       <MemoRow
         memo={memo}
@@ -46,7 +46,9 @@ function renderRow(props: Partial<Parameters<typeof MemoRow>[0]> = {}) {
         notePlayback={{
           statusFor: () => 'idle',
           toggle: () => {},
-          restart: () => {},
+          stop: () => {},
+          beginScrub: () => {},
+          endScrub: () => {},
           positionMs: () => 0,
         }}
         onTogglePlay={() => {}}
@@ -58,8 +60,49 @@ function renderRow(props: Partial<Parameters<typeof MemoRow>[0]> = {}) {
       />
     </ul>,
   );
-  return { onRename, memo };
+  return { onRename, memo, ...utils };
 }
+
+describe('opening a memo', () => {
+  it('exposes the title as a control carrying the expanded state', () => {
+    renderRow();
+    // Tapping the row is a pointer convenience; this is the control keyboard
+    // and screen-reader users actually operate.
+    const title = screen.getByRole('button', { name: 'Chorus idea' });
+    expect(title).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('toggles when the row itself is clicked', async () => {
+    const user = userEvent.setup();
+    const { container } = renderRow();
+    const row = container.querySelector('.memo-row')!;
+
+    await user.click(row);
+    expect(screen.getByRole('button', { name: 'Chorus idea' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('does not toggle when a control inside the row is used', async () => {
+    const user = userEvent.setup();
+    renderRow();
+
+    // Playing a memo, or renaming it, must not also open it — otherwise every
+    // action in the row has a second, unasked-for effect.
+    await user.click(screen.getByRole('button', { name: 'Play Chorus idea' }));
+    expect(screen.getByRole('button', { name: 'Chorus idea' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Export Chorus idea' }));
+    expect(screen.getByRole('button', { name: 'Chorus idea' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+});
 
 describe('MemoRow renaming', () => {
   it('names every control after its memo', async () => {

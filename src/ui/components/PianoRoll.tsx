@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { hzToMidi, midiToName } from '../../core/pitch.ts';
 import type { QuantizedNote, ScoreNote } from '../../core/types.ts';
+import type { TransportStatus } from '../../playback/TonePlayer.ts';
 import { MIN_NOTE_DURATION_MS } from '../../score/scoreEdits.ts';
 import {
+  KEY_GUTTER_WIDTH,
   createRollGeometry,
   isAccidental,
   type RollGeometry,
@@ -20,13 +22,19 @@ export interface ContourData {
  * Editing callbacks. When present, notes must be ScoreNotes (stable ids) and
  * the roll becomes interactive: notes drag with the pointer and move with the
  * keyboard, empty space creates on double-click, and a selected note exposes
- * a delete affordance for pointers without a Delete key.
+ * a resize grip and a delete affordance.
  */
 export interface RollEditor {
   onMove: (noteId: string, midi: number, startMs: number) => void;
   onResize: (noteId: string, durationMs: number) => void;
   onCreate: (midi: number, startMs: number) => void;
   onDelete: (noteId: string) => void;
+}
+
+/** Scrubbing the playhead. Begin pauses; end seeks and restores playback. */
+export interface RollScrubber {
+  onScrubStart: () => void;
+  onScrubEnd: (ms: number) => void;
 }
 
 interface PianoRollProps {
@@ -37,13 +45,14 @@ interface PianoRollProps {
   notes: readonly QuantizedNote[];
   contour?: ContourData | null;
   durationMs: number;
-  isPlaying: boolean;
+  transport: TransportStatus;
   /**
    * Polled per animation frame rather than passed as a value. A position prop
    * would re-render the whole memo list sixty times a second.
    */
   getPositionMs?: (() => number) | undefined;
   editor?: RollEditor | undefined;
+  scrubber?: RollScrubber | undefined;
 }
 
 /** Pointer movement below this is a click (select); above it, a drag begins. */
@@ -53,6 +62,9 @@ const DRAG_THRESHOLD_PX = 4;
 const NUDGE_MS = 50;
 const FINE_NUDGE_MS = 10;
 
+/** Keyboard seek step for the playhead. */
+const SEEK_STEP_MS = 250;
+
 /**
  * Width of the resize grip straddling a note's end, in px.
  *
@@ -61,6 +73,9 @@ const FINE_NUDGE_MS = 10;
  * move.
  */
 const HANDLE_WIDTH_PX = 14;
+
+/** Invisible width around the playhead line that accepts a drag. */
+const PLAYHEAD_GRAB_PX = 18;
 
 interface DragState {
   noteId: string;
@@ -85,14 +100,22 @@ interface DragPreview {
   durationMs: number;
 }
 
+interface ScrubState {
+  pointerId: number;
+  originX: number;
+  startMs: number;
+  currentMs: number;
+}
+
 function describeNote(note: QuantizedNote): string {
   return `${midiToName(note.midi)}, ${(note.startMs / 1000).toFixed(2)} seconds`;
 }
 
+const formatSeconds = (ms: number): string => `${(ms / 1000).toFixed(2)} seconds`;
+
 /**
- * Notes drawn against time, with the raw pitch contour behind them and a
- * playhead during playback. With an editor attached, the notes themselves
- * become the editing surface.
+ * Notes drawn against time, with the raw pitch contour behind them, pitch
+ * labels down the side, and a playhead that can be dragged to scrub.
  *
  * The contour is the point of the chart for judging a transcription: notes
  * alone show what was decided, the contour shows what the detector heard.
@@ -102,14 +125,16 @@ export function PianoRoll({
   notes,
   contour,
   durationMs,
-  isPlaying,
+  transport,
   getPositionMs,
   editor,
+  scrubber,
 }: PianoRollProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const playheadRef = useRef<SVGGElement>(null);
   const dragRef = useRef<DragState | null>(null);
+  const scrubRef = useRef<ScrubState | null>(null);
 
   const [preview, setPreview] = useState<DragPreview | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -119,8 +144,16 @@ export function PianoRoll({
   const { width, height, lowestMidi, highestMidi, rowHeight } = geometry;
   const semitoneSpan = highestMidi - lowestMidi + 1;
 
+  const isPlaying = transport === 'playing';
   /*
-   * The playhead is animated by writing to the DOM directly rather than
+   * Shown whenever the roll is scrubbable, not only while sounding: it has to
+   * be visible when paused so the resume point is obvious, and visible at rest
+   * so there is something to grab before anything has played.
+   */
+  const showPlayhead = transport !== 'idle' || scrubber != null;
+
+  /*
+   * The playhead is positioned by writing to the DOM directly rather than
    * through React state. At 60fps a state update would re-render every memo
    * row in the list each frame; moving one transform costs nothing.
    *
@@ -133,23 +166,37 @@ export function PianoRoll({
     const playhead = playheadRef.current;
     if (!playhead) return;
 
-    if (!isPlaying || !getPositionMs) {
+    if (!showPlayhead) {
       playhead.style.display = 'none';
       return;
     }
-
     playhead.style.display = '';
-    let frame = 0;
 
+    const place = (ms: number) => {
+      playhead.setAttribute(
+        'transform',
+        `translate(${geometry.xForMs(ms).toFixed(2)} 0)`,
+      );
+    };
+
+    if (!isPlaying) {
+      // Paused or cued: draw it once where it stands, so the user can see
+      // where playback will resume from.
+      place(getPositionMs?.() ?? 0);
+      return;
+    }
+
+    let frame = 0;
     const tick = () => {
-      const x = geometry.xForMs(getPositionMs());
-      playhead.setAttribute('transform', `translate(${x.toFixed(2)} 0)`);
+      const ms = getPositionMs?.() ?? 0;
+      place(ms);
 
       // Follow the playhead only when it has actually left the visible
       // window, so a user who has scrolled to look at something isn't
       // constantly yanked back.
       const scroller = scrollRef.current;
       if (scroller) {
+        const x = geometry.xForMs(ms);
         const left = scroller.scrollLeft;
         const right = left + scroller.clientWidth;
         if (x < left || x > right - 24) {
@@ -165,7 +212,7 @@ export function PianoRoll({
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
     // geometry is recreated each render but is a pure function of these.
-  }, [isPlaying, getPositionMs, width, durationMs, notes]);
+  }, [showPlayhead, isPlaying, getPositionMs, width, durationMs, notes]);
 
   /*
    * Touch drags, which CSS alone cannot deliver here.
@@ -178,31 +225,34 @@ export function PianoRoll({
    *
    * Putting `touch-action: none` on the <svg> would fix it by making the roll
    * unscrollable, which is worse. Instead the default is cancelled only for
-   * gestures that begin on a note — the listener must be non-passive, since a
-   * passive one cannot preventDefault, and it has to be attached natively
-   * because React's synthetic touch listeners are passive.
+   * gestures that begin on something draggable — the listener must be
+   * non-passive, since a passive one cannot preventDefault, and it has to be
+   * attached natively because React's synthetic touch listeners are passive.
    */
   useEffect(() => {
     const svg = svgRef.current;
-    if (!editor || !svg) return;
+    // Nothing here is draggable without one of these, and cancelling gestures
+    // on a read-only chart would only make it harder to scroll.
+    if (!svg || (!editor && !scrubber)) return;
+
+    // Matched on the specific classes, not on [data-editable] — the <svg> also
+    // carries that attribute (for its touch-action rule), so an attribute
+    // selector would match every touch on empty space too and leave the roll
+    // unscrollable. Built from what is actually draggable, so a chart with a
+    // playhead but no editor doesn't trap touches on its notes.
+    const draggable = [
+      ...(editor ? ['.piano-roll__note', '.piano-roll__handle'] : []),
+      ...(scrubber ? ['.piano-roll__playhead'] : []),
+    ].join(', ');
 
     const onTouchStart = (event: TouchEvent) => {
       const target = event.target as Element | null;
-      // Matched on the notes' own classes, not on [data-editable] — the <svg>
-      // also carries that attribute (for its touch-action rule), so an
-      // attribute selector would match every touch on empty space too and
-      // leave the roll unscrollable. The resize grip must be listed here as
-      // well, or dragging it on Android gets claimed as a scroll exactly as
-      // note drags used to be.
-      //
       // Cancelling at touchstart is what stops the browser claiming the
       // gesture; by touchmove the decision is already made.
-      if (target?.closest?.('.piano-roll__note, .piano-roll__handle')) {
-        event.preventDefault();
-      }
+      if (target?.closest?.(draggable)) event.preventDefault();
     };
     const onTouchMove = (event: TouchEvent) => {
-      if (dragRef.current) event.preventDefault();
+      if (dragRef.current || scrubRef.current) event.preventDefault();
     };
 
     svg.addEventListener('touchstart', onTouchStart, { passive: false });
@@ -211,9 +261,7 @@ export function PianoRoll({
       svg.removeEventListener('touchstart', onTouchStart);
       svg.removeEventListener('touchmove', onTouchMove);
     };
-  }, [editor]);
-
-  if (notes.length === 0 && !editor) return null;
+  }, [editor, scrubber]);
 
   const announce = (message: string) => {
     // A live region only fires on change; identical successive messages need
@@ -230,7 +278,23 @@ export function PianoRoll({
   const clampMidiToRange = (midi: number) =>
     Math.min(highestMidi, Math.max(lowestMidi, midi));
 
-  // --- pointer editing -----------------------------------------------------
+  /**
+   * Capture keeps events flowing when the pointer leaves the element
+   * mid-drag, which is an enhancement rather than a requirement — so a failure
+   * must not take the drag with it. It throws NotFoundError whenever the
+   * browser does not consider the id an active pointer, and an uncaught throw
+   * aborts the handler before the drag is ever registered.
+   */
+  const capture = (element: Element, pointerId: number) => {
+    try {
+      (element as Element & { setPointerCapture?: (id: number) => void })
+        .setPointerCapture?.(pointerId);
+    } catch {
+      // Drag proceeds uncaptured.
+    }
+  };
+
+  // --- note editing --------------------------------------------------------
 
   const beginDrag = (
     event: React.PointerEvent<SVGRectElement>,
@@ -242,20 +306,7 @@ export function PianoRoll({
     if (event.button !== 0) return;
     event.stopPropagation();
 
-    /*
-     * Capture keeps events flowing when the pointer leaves the note mid-drag,
-     * which is an enhancement rather than a requirement — so a failure must
-     * not take the drag with it. It throws NotFoundError whenever the browser
-     * does not consider the id an active pointer, and an uncaught throw here
-     * aborts the handler before the drag is ever registered, silently
-     * disabling dragging altogether.
-     */
-    try {
-      event.currentTarget.setPointerCapture?.(event.pointerId);
-    } catch {
-      // Drag proceeds uncaptured.
-    }
-
+    capture(event.currentTarget, event.pointerId);
     dragRef.current = {
       noteId: note.id,
       pointerId: event.pointerId,
@@ -297,9 +348,7 @@ export function PianoRoll({
 
     // Delta-based rather than absolute: the note moves by how far the pointer
     // travelled, so grabbing a note anywhere on its body feels anchored.
-    const midi = clampMidiToRange(
-      drag.startMidi - Math.round(dy / rowHeight),
-    );
+    const midi = clampMidiToRange(drag.startMidi - Math.round(dy / rowHeight));
     const startMs = Math.max(0, drag.startMs + geometry.msForX(dx));
     return {
       noteId: drag.noteId,
@@ -326,11 +375,11 @@ export function PianoRoll({
     if (target && drag.moved) {
       if (drag.mode === 'resize') {
         editor.onResize(drag.noteId, target.durationMs);
-        announce(`Length ${(target.durationMs / 1000).toFixed(2)} seconds`);
+        announce(`Length ${formatSeconds(target.durationMs)}`);
       } else {
         editor.onMove(drag.noteId, target.midi, target.startMs);
         announce(
-          `Moved to ${midiToName(target.midi)}, ${(target.startMs / 1000).toFixed(2)} seconds`,
+          `Moved to ${midiToName(target.midi)}, ${formatSeconds(target.startMs)}`,
         );
       }
     }
@@ -349,10 +398,8 @@ export function PianoRoll({
     const midi = clampMidiToRange(geometry.midiForY(y));
     const startMs = Math.max(0, geometry.msForX(x));
     editor.onCreate(midi, startMs);
-    announce(`Added ${midiToName(midi)} at ${(startMs / 1000).toFixed(2)} seconds`);
+    announce(`Added ${midiToName(midi)} at ${formatSeconds(startMs)}`);
   };
-
-  // --- keyboard editing ----------------------------------------------------
 
   const handleNoteKeyDown = (
     event: React.KeyboardEvent<SVGRectElement>,
@@ -382,12 +429,12 @@ export function PianoRoll({
       case ']': {
         event.preventDefault();
         const step = event.shiftKey ? FINE_NUDGE_MS : NUDGE_MS;
-        const durationMs = Math.max(
+        const nextDuration = Math.max(
           MIN_NOTE_DURATION_MS,
           note.durationMs + (event.key === ']' ? step : -step),
         );
-        editor.onResize(note.id, durationMs);
-        announce(`Length ${(durationMs / 1000).toFixed(2)} seconds`);
+        editor.onResize(note.id, nextDuration);
+        announce(`Length ${formatSeconds(nextDuration)}`);
         return;
       }
       case 'Delete':
@@ -408,13 +455,81 @@ export function PianoRoll({
     // Arrow keys otherwise scroll the container out from under the edit.
     event.preventDefault();
     editor.onMove(note.id, midi, startMs);
-    announce(`${midiToName(midi)}, ${(startMs / 1000).toFixed(2)} seconds`);
+    announce(`${midiToName(midi)}, ${formatSeconds(startMs)}`);
+  };
+
+  // --- playhead scrubbing --------------------------------------------------
+
+  const placePlayhead = (ms: number) => {
+    playheadRef.current?.setAttribute(
+      'transform',
+      `translate(${geometry.xForMs(ms).toFixed(2)} 0)`,
+    );
+  };
+
+  const handleScrubPointerDown = (event: React.PointerEvent<SVGRectElement>) => {
+    if (!scrubber || event.button !== 0) return;
+    event.stopPropagation();
+    capture(event.currentTarget, event.pointerId);
+
+    const startMs = getPositionMs?.() ?? 0;
+    scrubRef.current = {
+      pointerId: event.pointerId,
+      originX: event.clientX,
+      startMs,
+      currentMs: startMs,
+    };
+    // Pausing first means the audio isn't rescheduled on every frame of the
+    // drag — seeking tears down and rebuilds every voice.
+    scrubber.onScrubStart();
+  };
+
+  const handleScrubPointerMove = (event: React.PointerEvent<SVGRectElement>) => {
+    const scrub = scrubRef.current;
+    if (!scrub) return;
+    const ms = Math.min(
+      geometry.totalMs,
+      Math.max(0, scrub.startMs + geometry.msForX(event.clientX - scrub.originX)),
+    );
+    scrub.currentMs = ms;
+    // Written straight to the DOM: this runs per pointermove and must not
+    // re-render the list.
+    placePlayhead(ms);
+  };
+
+  const handleScrubPointerUp = () => {
+    const scrub = scrubRef.current;
+    if (!scrub || !scrubber) return;
+    scrubRef.current = null;
+    scrubber.onScrubEnd(scrub.currentMs);
+    announce(`Playhead at ${formatSeconds(scrub.currentMs)}`);
+  };
+
+  const handleScrubKeyDown = (event: React.KeyboardEvent<SVGRectElement>) => {
+    if (!scrubber) return;
+    const current = getPositionMs?.() ?? 0;
+    let next: number | null = null;
+
+    if (event.key === 'ArrowLeft') next = current - SEEK_STEP_MS;
+    else if (event.key === 'ArrowRight') next = current + SEEK_STEP_MS;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = geometry.totalMs;
+    if (next === null) return;
+
+    event.preventDefault();
+    const clamped = Math.min(geometry.totalMs, Math.max(0, next));
+    // Same pause/seek pairing as the pointer path, so the two behave alike.
+    scrubber.onScrubStart();
+    scrubber.onScrubEnd(clamped);
+    placePlayhead(clamped);
+    announce(`Playhead at ${formatSeconds(clamped)}`);
   };
 
   // --- render --------------------------------------------------------------
 
   const selectedNote = editor
-    ? (notes as readonly ScoreNote[]).find((note) => note.id === selectedId) ?? null
+    ? ((notes as readonly ScoreNote[]).find((note) => note.id === selectedId) ??
+      null)
     : null;
 
   const contourPath = contour ? buildContourPath(contour, geometry) : null;
@@ -426,34 +541,75 @@ export function PianoRoll({
         `${midiToName(Math.min(...notes.map((n) => n.midi)))} to ` +
         `${midiToName(Math.max(...notes.map((n) => n.midi)))}.`;
 
+  const rows = Array.from({ length: semitoneSpan }, (_, row) => highestMidi - row);
+
   return (
     <div>
-      <div
-        className="piano-roll"
-        ref={scrollRef}
-        tabIndex={0}
-        role="group"
-        aria-label={
-          editor ? 'Note editor, scrollable. Notes are focusable.' : 'Pitch chart, scrollable'
-        }
-      >
+      <div className="piano-roll">
+        {/*
+          Pitch labels live outside the scroller so they stay put while the
+          chart scrolls horizontally. Hidden from assistive tech: the same
+          information is already in each note's own label, and reading a
+          column of note names aloud conveys nothing about the music.
+        */}
         <svg
-          className="piano-roll__svg"
-          ref={svgRef}
-          width={width}
+          className="piano-roll__keys"
+          width={KEY_GUTTER_WIDTH}
           height={height}
-          viewBox={`0 0 ${width} ${height}`}
-          // Read-only: one labelled image. Editable: role="img" would hide
-          // the focusable notes from assistive tech entirely, so the svg
-          // stays a plain container and each note carries its own label.
-          role={editor ? undefined : 'img'}
-          aria-label={editor ? undefined : summary}
-          data-editable={editor ? true : undefined}
-          onDoubleClick={editor ? handleBackgroundDoubleClick : undefined}
+          aria-hidden="true"
         >
-          {Array.from({ length: semitoneSpan }, (_, row) => {
-            const midi = highestMidi - row;
-            return (
+          {rows.map((midi, row) => (
+            <g key={midi}>
+              <rect
+                x={0}
+                y={row * rowHeight}
+                width={KEY_GUTTER_WIDTH}
+                height={rowHeight}
+                className={
+                  isAccidental(midi)
+                    ? 'piano-roll__key--accidental'
+                    : 'piano-roll__key'
+                }
+              />
+              <text
+                x={KEY_GUTTER_WIDTH - 5}
+                y={row * rowHeight + rowHeight / 2}
+                className="piano-roll__key-label"
+                textAnchor="end"
+                dominantBaseline="central"
+              >
+                {midiToName(midi)}
+              </text>
+            </g>
+          ))}
+        </svg>
+
+        <div
+          className="piano-roll__scroll"
+          ref={scrollRef}
+          tabIndex={0}
+          role="group"
+          aria-label={
+            editor
+              ? 'Note editor, scrollable. Notes are focusable.'
+              : 'Pitch chart, scrollable'
+          }
+        >
+          <svg
+            className="piano-roll__svg"
+            ref={svgRef}
+            width={width}
+            height={height}
+            viewBox={`0 0 ${width} ${height}`}
+            // Read-only: one labelled image. Editable: role="img" would hide
+            // the focusable notes from assistive tech entirely, so the svg
+            // stays a plain container and each note carries its own label.
+            role={editor ? undefined : 'img'}
+            aria-label={editor ? undefined : summary}
+            data-editable={editor ? true : undefined}
+            onDoubleClick={editor ? handleBackgroundDoubleClick : undefined}
+          >
+            {rows.map((midi, row) => (
               <rect
                 key={midi}
                 x={0}
@@ -466,95 +622,138 @@ export function PianoRoll({
                     : 'piano-roll__row'
                 }
               />
-            );
-          })}
+            ))}
 
-          {contourPath && (
-            <path className="piano-roll__contour" d={contourPath} fill="none" />
-          )}
+            {contourPath && (
+              <path className="piano-roll__contour" d={contourPath} fill="none" />
+            )}
 
-          {notes.map((note, index) => {
-            const scoreNote = editor ? (note as ScoreNote) : null;
-            const dragged =
-              preview && scoreNote && preview.noteId === scoreNote.id;
-            const midi = dragged ? preview.midi : note.midi;
-            const startMs = dragged ? preview.startMs : note.startMs;
-            const durationMs = dragged ? preview.durationMs : note.durationMs;
+            {notes.map((note, index) => {
+              const scoreNote = editor ? (note as ScoreNote) : null;
+              const dragged =
+                preview && scoreNote && preview.noteId === scoreNote.id;
+              const midi = dragged ? preview.midi : note.midi;
+              const startMs = dragged ? preview.startMs : note.startMs;
+              const noteDuration = dragged ? preview.durationMs : note.durationMs;
 
-            const x = geometry.xForMs(startMs);
-            const width = Math.max(3, geometry.widthForMs(durationMs));
-            const selected = scoreNote != null && selectedId === scoreNote.id;
+              const x = geometry.xForMs(startMs);
+              const noteWidth = Math.max(3, geometry.widthForMs(noteDuration));
+              const selected = scoreNote != null && selectedId === scoreNote.id;
+              const gripWidth = Math.min(HANDLE_WIDTH_PX, noteWidth * 0.6);
 
-            return (
-              <g key={scoreNote?.id ?? `${note.startMs}-${index}`}>
-                <rect
-                  className="piano-roll__note"
-                  data-editable={editor ? true : undefined}
-                  data-selected={selected || undefined}
-                  data-dragging={dragged || undefined}
-                  x={x}
-                  y={geometry.yForMidi(midi) + 1}
-                  width={width}
-                  height={rowHeight - 2}
-                  rx={2}
-                  // Confidence as opacity, so a shaky transcription looks shaky
-                  // rather than as definite as a clean one. Dragging goes solid.
-                  opacity={dragged ? 1 : 0.45 + 0.55 * Math.min(1, note.confidence)}
-                  {...(editor && scoreNote
-                    ? {
-                        tabIndex: 0,
-                        role: 'button',
-                        'aria-label': `Note ${describeNote(note)}. Arrow keys move, brackets change length, Delete removes.`,
-                        onPointerDown: (event) =>
-                          beginDrag(event, scoreNote, 'move'),
-                        onPointerMove: handleNotePointerMove,
-                        onPointerUp: handleNotePointerUp,
-                        onPointerCancel: handleNotePointerCancel,
-                        onKeyDown: (event) => handleNoteKeyDown(event, scoreNote),
-                        onFocus: () => setSelectedId(scoreNote.id),
-                      }
-                    : {})}
-                />
-
-                {/*
-                  The resize grip, on the selected note only — showing one on
-                  every note would cover short notes in targets and make plain
-                  dragging unreliable. It straddles the end so the edge itself
-                  is grabbable, capped against the note's width so a short note
-                  keeps enough body left to drag.
-                */}
-                {editor && scoreNote && selected && (
+              return (
+                <g key={scoreNote?.id ?? `${note.startMs}-${index}`}>
                   <rect
-                    className="piano-roll__handle"
-                    x={x + width - Math.min(HANDLE_WIDTH_PX, width * 0.6) / 2}
+                    className="piano-roll__note"
+                    data-editable={editor ? true : undefined}
+                    data-selected={selected || undefined}
+                    data-dragging={dragged || undefined}
+                    x={x}
                     y={geometry.yForMidi(midi) + 1}
-                    width={Math.min(HANDLE_WIDTH_PX, width * 0.6)}
+                    width={noteWidth}
                     height={rowHeight - 2}
-                    role="button"
-                    aria-label={`Change length of ${midiToName(note.midi)}`}
-                    onPointerDown={(event) =>
-                      beginDrag(event, scoreNote, 'resize')
+                    rx={2}
+                    // Confidence as opacity, so a shaky transcription looks
+                    // shaky rather than as definite as a clean one.
+                    opacity={
+                      dragged ? 1 : 0.45 + 0.55 * Math.min(1, note.confidence)
                     }
-                    onPointerMove={handleNotePointerMove}
-                    onPointerUp={handleNotePointerUp}
-                    onPointerCancel={handleNotePointerCancel}
+                    {...(editor && scoreNote
+                      ? {
+                          tabIndex: 0,
+                          role: 'button',
+                          'aria-label': `Note ${describeNote(note)}. Arrow keys move, brackets change length, Delete removes.`,
+                          onPointerDown: (event) =>
+                            beginDrag(event, scoreNote, 'move'),
+                          onPointerMove: handleNotePointerMove,
+                          onPointerUp: handleNotePointerUp,
+                          onPointerCancel: handleNotePointerCancel,
+                          onKeyDown: (event) =>
+                            handleNoteKeyDown(event, scoreNote),
+                          onFocus: () => setSelectedId(scoreNote.id),
+                        }
+                      : {})}
                   />
-                )}
-              </g>
-            );
-          })}
 
-          {/* Position is conveyed by the audio itself; this is purely visual. */}
-          <g ref={playheadRef} style={{ display: 'none' }} aria-hidden="true">
-            <line
+                  {/*
+                    The resize grip, on the selected note only — showing one on
+                    every note would cover short notes in targets and make
+                    plain dragging unreliable. It straddles the end so the edge
+                    itself is grabbable, capped against the note's width so a
+                    short note keeps enough body left to drag.
+                  */}
+                  {editor && scoreNote && selected && (
+                    <rect
+                      className="piano-roll__handle"
+                      x={x + noteWidth - gripWidth / 2}
+                      y={geometry.yForMidi(midi) + 1}
+                      width={gripWidth}
+                      height={rowHeight - 2}
+                      role="button"
+                      aria-label={`Change length of ${midiToName(note.midi)}`}
+                      onPointerDown={(event) =>
+                        beginDrag(event, scoreNote, 'resize')
+                      }
+                      onPointerMove={handleNotePointerMove}
+                      onPointerUp={handleNotePointerUp}
+                      onPointerCancel={handleNotePointerCancel}
+                    />
+                  )}
+                </g>
+              );
+            })}
+
+            <g
+              ref={playheadRef}
               className="piano-roll__playhead"
-              x1={0}
-              y1={0}
-              x2={0}
-              y2={height}
-            />
-          </g>
-        </svg>
+              style={{ display: 'none' }}
+            >
+              {/*
+                A 2px line is not a drag target. This invisible band around it
+                is what the pointer actually grabs.
+              */}
+              <rect
+                className="piano-roll__playhead-grab"
+                x={-PLAYHEAD_GRAB_PX / 2}
+                y={0}
+                width={PLAYHEAD_GRAB_PX}
+                height={height}
+                {...(scrubber
+                  ? {
+                      tabIndex: 0,
+                      role: 'slider',
+                      'aria-label': 'Playhead position',
+                      'aria-valuemin': 0,
+                      'aria-valuemax': Math.round(geometry.totalMs),
+                      'aria-valuenow': Math.round(getPositionMs?.() ?? 0),
+                      'aria-valuetext': formatSeconds(getPositionMs?.() ?? 0),
+                      onPointerDown: handleScrubPointerDown,
+                      onPointerMove: handleScrubPointerMove,
+                      onPointerUp: handleScrubPointerUp,
+                      onPointerCancel: handleScrubPointerUp,
+                      onKeyDown: handleScrubKeyDown,
+                    }
+                  : {})}
+              />
+              <line
+                className="piano-roll__playhead-line"
+                x1={0}
+                y1={0}
+                x2={0}
+                y2={height}
+              />
+              {/* A wider head at the top, so there is something obvious to grab. */}
+              <rect
+                className="piano-roll__playhead-head"
+                x={-5}
+                y={0}
+                width={10}
+                height={6}
+                rx={2}
+              />
+            </g>
+          </svg>
+        </div>
       </div>
 
       {editor && (

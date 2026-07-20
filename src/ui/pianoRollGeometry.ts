@@ -13,7 +13,13 @@ import type { QuantizedNote } from '../core/types.ts';
  */
 
 export const PIXELS_PER_SECOND = 110;
-export const ROW_HEIGHT = 11;
+/**
+ * Tall enough for a pitch label to sit legibly in the gutter, and for a note
+ * to be a comfortable drag target on a phone.
+ */
+export const ROW_HEIGHT = 14;
+/** Width of the fixed pitch-label column beside the scrolling chart. */
+export const KEY_GUTTER_WIDTH = 34;
 /** Blank rows above and below, so the highest and lowest notes aren't flush to the edge. */
 const PADDING_SEMITONES = 3;
 const MIN_WIDTH = 280;
