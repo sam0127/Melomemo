@@ -42,11 +42,15 @@ function renderRow(props: Partial<Parameters<typeof MemoRow>[0]> = {}) {
         isCurrent={false}
         isPlaying={false}
         isTranscribing={false}
-        isPlayingNotes={false}
         repository={new InMemoryMemoRepository()}
+        notePlayback={{
+          statusFor: () => 'idle',
+          toggle: () => {},
+          restart: () => {},
+          positionMs: () => 0,
+        }}
         onTogglePlay={() => {}}
         onTranscribe={() => {}}
-        onToggleNotePlayback={() => {}}
         onRename={onRename}
         onExport={() => {}}
         onDelete={() => {}}

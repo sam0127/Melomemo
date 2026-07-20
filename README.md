@@ -92,7 +92,15 @@ what marks existing transcriptions stale so they can be recomputed.
 
 **Play notes** synthesises the transcription as tones, separately from the
 original recording — hearing the two back to back is the quickest way to judge
-whether a transcription is right. Only one of the two plays at a time.
+whether a transcription is right. Playback can be paused, resumed, and
+restarted, and a playhead tracks through the piano roll, which auto-scrolls to
+follow it. Only one of the two audio sources plays at a time.
+
+The piano roll's coordinate maths lives in
+[`src/ui/pianoRollGeometry.ts`](src/ui/pianoRollGeometry.ts) with both forward
+(time→x, pitch→y) and inverse mappings — the inverses are unused by rendering
+but are the foundation for editing notes on the roll, so hit-testing and
+dragging resolve through the same maths the renderer draws with.
 
 Every memo's **Notes → Show details** panel gives the engine version, what
 fraction of frames were pitched, median confidence, the detected tuning offset,

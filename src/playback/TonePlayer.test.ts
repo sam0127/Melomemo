@@ -4,20 +4,16 @@ import { TonePlayer, WAVEFORM } from './TonePlayer.ts';
 
 /**
  * jsdom has no Web Audio, so the graph is faked. What is worth asserting here
- * is not the sound but the bookkeeping: which memo the player believes it is
- * playing, and that subscribers are told the truth. A desync there showed the
- * wrong button label while audio was audibly playing.
+ * is not the sound but the transport bookkeeping: which memo is loaded, what
+ * the status is, where the playhead sits, and that pausing then resuming
+ * schedules the remainder correctly. A desync between those and the audible
+ * truth is exactly the class of bug this player exists to prevent.
  */
 
 class FakeParam {
-  events: Array<[string, number, number]> = [];
   value = 0;
-  setValueAtTime(v: number, t: number) {
-    this.events.push(['set', v, t]);
-  }
-  linearRampToValueAtTime(v: number, t: number) {
-    this.events.push(['ramp', v, t]);
-  }
+  setValueAtTime() {}
+  linearRampToValueAtTime() {}
 }
 
 class FakeOscillator {
@@ -45,6 +41,7 @@ class FakeGain {
 class FakeAudioContext {
   static instances: FakeAudioContext[] = [];
   state = 'running';
+  /** Advanced by tests to simulate audio time passing. */
   currentTime = 0;
   destination = {};
   oscillators: FakeOscillator[] = [];
@@ -78,7 +75,11 @@ function notes(...midis: number[]): QuantizedNote[] {
   }));
 }
 
-describe('TonePlayer', () => {
+function context(): FakeAudioContext {
+  return FakeAudioContext.instances[0]!;
+}
+
+describe('TonePlayer transport', () => {
   beforeEach(() => {
     FakeAudioContext.instances = [];
     vi.stubGlobal('AudioContext', FakeAudioContext);
@@ -94,50 +95,108 @@ describe('TonePlayer', () => {
     const player = new TonePlayer();
     await player.play('memo-1', notes(69, 72)); // A4, C5
 
-    const context = FakeAudioContext.instances[0]!;
-    expect(context.oscillators).toHaveLength(2);
-    expect(context.oscillators[0]!.frequency.value).toBeCloseTo(440, 5);
-    expect(context.oscillators[1]!.frequency.value).toBeCloseTo(523.25, 1);
+    expect(context().oscillators).toHaveLength(2);
+    expect(context().oscillators[0]!.frequency.value).toBeCloseTo(440, 5);
+    expect(context().oscillators[1]!.frequency.value).toBeCloseTo(523.25, 1);
     // Asserted against the exported constant rather than a literal, so
-    // changing the waveform doesn't silently leave this test checking the old
-    // one.
-    expect(context.oscillators.every((o) => o.type === WAVEFORM)).toBe(true);
+    // changing the waveform cannot leave this test checking the old one.
+    expect(context().oscillators.every((o) => o.type === WAVEFORM)).toBe(true);
   });
 
   it('schedules notes at their transcribed offsets', async () => {
     const player = new TonePlayer();
     await player.play('memo-1', notes(60, 62, 64));
 
-    const context = FakeAudioContext.instances[0]!;
-    const starts = context.oscillators.map((o) => o.started!);
+    const starts = context().oscillators.map((o) => o.started!);
     expect(starts[1]! - starts[0]!).toBeCloseTo(0.5, 5);
     expect(starts[2]! - starts[1]!).toBeCloseTo(0.5, 5);
   });
 
-  it('reports which memo is playing', async () => {
+  it('moves through playing, paused, and back', async () => {
     const player = new TonePlayer();
-    expect(player.currentMemoId).toBeNull();
+    expect(player.status).toBe('idle');
 
-    await player.play('memo-1', notes(60));
+    await player.play('memo-1', notes(60, 62, 64));
+    expect(player.status).toBe('playing');
+
+    player.pause();
+    expect(player.status).toBe('paused');
     expect(player.currentMemoId).toBe('memo-1');
-    expect(player.playing).toBe(true);
+
+    await player.resume();
+    expect(player.status).toBe('playing');
 
     player.stop();
-    expect(player.currentMemoId).toBeNull();
-    expect(player.playing).toBe(false);
+    expect(player.status).toBe('idle');
   });
 
-  it('tells subscribers which memo is playing, not just that something is', async () => {
-    // The UI decides which row shows "Stop" from this, so the id has to travel
-    // with the transition.
-    const seen: Array<string | null> = [];
+  it('tracks position from audio time, and holds it across a pause', async () => {
     const player = new TonePlayer();
-    player.subscribe((state) => seen.push(state.memoId));
+    await player.play('memo-1', notes(60, 62, 64));
+
+    // The run starts LEAD_S after currentTime; advance 0.66s of audio time,
+    // which is 0.6s past the lead.
+    context().currentTime += 0.66;
+    expect(player.positionMs).toBeCloseTo(600, 0);
+
+    player.pause();
+    // Audio time marching on must not move a paused playhead.
+    context().currentTime += 5;
+    expect(player.positionMs).toBeCloseTo(600, 0);
+  });
+
+  it('resumes by scheduling only what remains', async () => {
+    const player = new TonePlayer();
+    // Three notes: 0-400, 500-900, 1000-1400 ms.
+    await player.play('memo-1', notes(60, 62, 64));
+
+    context().currentTime += 0.06 + 0.7; // lead + 700ms: inside the second note
+    player.pause();
+    const before = context().oscillators.length;
+
+    await player.resume();
+    const scheduled = context().oscillators.slice(before);
+
+    // The first note is over; the second restarts truncated, the third whole.
+    expect(scheduled).toHaveLength(2);
+    const [second, third] = scheduled;
+    // Resumed run's own lead-relative offsets: the straddling note starts
+    // immediately, the next one 300ms later (1000 - 700).
+    expect(third!.started! - second!.started!).toBeCloseTo(0.3, 5);
+    // The truncated note ends 200ms in (900 - 700), when it always would have.
+    expect(second!.stopped! - second!.started!).toBeCloseTo(0.2, 5);
+  });
+
+  it('restart plays from the beginning whatever the state', async () => {
+    const player = new TonePlayer();
+    await player.play('memo-1', notes(60, 62));
+    context().currentTime += 0.8;
+    player.pause();
+
+    await player.restart();
+    expect(player.status).toBe('playing');
+    expect(player.positionMs).toBeCloseTo(0, 0);
+    // A full restart schedules every note again.
+    expect(context().oscillators.length).toBe(4);
+  });
+
+  it('tells subscribers the status and memo together', async () => {
+    const seen: Array<[string, string | null]> = [];
+    const player = new TonePlayer();
+    player.subscribe((state) => seen.push([state.status, state.memoId]));
 
     await player.play('memo-1', notes(60));
+    player.pause();
+    await player.resume();
     player.stop();
 
-    expect(seen).toEqual([null, 'memo-1', null]);
+    expect(seen).toEqual([
+      ['idle', null],
+      ['playing', 'memo-1'],
+      ['paused', 'memo-1'],
+      ['playing', 'memo-1'],
+      ['idle', 'memo-1'],
+    ]);
   });
 
   it('replaces a sequence already playing rather than layering it', async () => {
@@ -146,26 +205,28 @@ describe('TonePlayer', () => {
     await player.play('memo-2', notes(67));
 
     expect(player.currentMemoId).toBe('memo-2');
-    const context = FakeAudioContext.instances[0]!;
     // The first sequence's voices must be stopped, not left ringing.
-    expect(context.oscillators.slice(0, 2).every((o) => o.stopped !== null)).toBe(true);
+    expect(
+      context().oscillators.slice(0, 2).every((o) => o.stopped !== null),
+    ).toBe(true);
   });
 
-  it('returns to idle once the sequence finishes on its own', async () => {
+  it('returns to idle at the start once the sequence finishes on its own', async () => {
     const player = new TonePlayer();
     await player.play('memo-1', notes(60, 62));
-    expect(player.playing).toBe(true);
+    expect(player.status).toBe('playing');
 
-    // Without this the button would stay on "Stop" after the audio ended.
+    // Without this the button would stay on "Pause" after the audio ended,
+    // and a subsequent play would resume from the end and do nothing.
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(player.playing).toBe(false);
-    expect(player.currentMemoId).toBeNull();
+    expect(player.status).toBe('idle');
+    expect(player.positionMs).toBe(0);
   });
 
   it('does nothing for an empty transcription', async () => {
     const player = new TonePlayer();
     await player.play('memo-1', []);
-    expect(player.playing).toBe(false);
+    expect(player.status).toBe('idle');
     expect(FakeAudioContext.instances).toHaveLength(0);
   });
 });

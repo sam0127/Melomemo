@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatDurationSpoken } from '../core/format.ts';
 import type { AppError } from '../core/result.ts';
-import type { CapturedAudio, Memo, QuantizedNote } from '../core/types.ts';
+import type { CapturedAudio, Memo } from '../core/types.ts';
 import { PlaybackService } from '../playback/PlaybackService.ts';
-import { TonePlayer } from '../playback/TonePlayer.ts';
+import { TonePlayer, type TonePlayerState } from '../playback/TonePlayer.ts';
+import type { NotePlaybackControls } from './notePlayback.ts';
 import { exportArchive, exportAudio, importArchive } from '../storage/archive.ts';
 import { IdbMemoRepository } from '../storage/memoRepository.ts';
 import { probeStorageWritable } from '../storage/persistence.ts';
@@ -37,7 +38,10 @@ export function App() {
   const [storageWritable, setStorageWritable] = useState(true);
   const [currentMemoId, setCurrentMemoId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [notePlaybackMemoId, setNotePlaybackMemoId] = useState<string | null>(null);
+  const [noteTransport, setNoteTransport] = useState<TonePlayerState>({
+    status: 'idle',
+    memoId: null,
+  });
 
   const memosApi = useMemos(repository);
   const { memos, loading, saveCaptured, remove, rename } = memosApi;
@@ -60,10 +64,10 @@ export function App() {
   useEffect(() => () => playback.dispose(), [playback]);
 
   // The player is authoritative; this only mirrors it for rendering. Nothing
-  // else writes notePlaybackMemoId, so the button cannot disagree with what is
+  // else writes noteTransport, so the controls cannot disagree with what is
   // actually sounding — including when a sequence ends on its own.
   useEffect(
-    () => tonePlayer.subscribe((state) => setNotePlaybackMemoId(state.memoId)),
+    () => tonePlayer.subscribe(setNoteTransport),
     [tonePlayer],
   );
 
@@ -139,20 +143,39 @@ export function App() {
     [playback, remove, announce],
   );
 
-  const handleToggleNotePlayback = useCallback(
-    async (memo: Memo, notes: QuantizedNote[]) => {
-      // Read from the player rather than from render state, so a rapid toggle
-      // cannot act on a value that has already moved on.
-      if (tonePlayer.currentMemoId === memo.id) {
-        tonePlayer.stop();
-        return;
-      }
-      // The recording and its transcription played at once are just noise, and
-      // on iOS two sources competing for the audio session goes badly.
-      playback.pause();
-      await tonePlayer.play(memo.id, notes);
-    },
-    [playback, tonePlayer],
+  const notePlayback: NotePlaybackControls = useMemo(
+    () => ({
+      statusFor: (memoId) =>
+        noteTransport.memoId === memoId ? noteTransport.status : 'idle',
+
+      toggle: (memo, notes) => {
+        // Read transport state from the player rather than from render state,
+        // so a rapid toggle cannot act on a value that has already moved on.
+        if (tonePlayer.currentMemoId === memo.id) {
+          if (tonePlayer.status === 'playing') {
+            tonePlayer.pause();
+            return;
+          }
+          if (tonePlayer.status === 'paused') {
+            playback.pause();
+            void tonePlayer.resume();
+            return;
+          }
+        }
+        // The recording and its transcription played at once are just noise,
+        // and on iOS two sources competing for the audio session goes badly.
+        playback.pause();
+        void tonePlayer.play(memo.id, [...notes]);
+      },
+
+      restart: (memo, notes) => {
+        playback.pause();
+        void tonePlayer.play(memo.id, [...notes], 0);
+      },
+
+      positionMs: () => tonePlayer.positionMs,
+    }),
+    [noteTransport, playback, tonePlayer],
   );
 
   const handleTranscribe = useCallback(
@@ -332,10 +355,9 @@ export function App() {
               isPlaying={isPlaying}
               repository={repository}
               isTranscribing={transcription.isRunning}
-              notePlaybackMemoId={notePlaybackMemoId}
+              notePlayback={notePlayback}
               onTogglePlay={handleTogglePlay}
               onTranscribe={handleTranscribe}
-              onToggleNotePlayback={handleToggleNotePlayback}
               onRename={handleRename}
               onExport={handleExportOne}
               onDelete={handleDelete}

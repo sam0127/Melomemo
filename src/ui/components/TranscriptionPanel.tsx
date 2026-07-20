@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react';
 import { isStale } from '../../analysis/registry.ts';
 import { midiToName } from '../../core/pitch.ts';
-import type { AnalysisRecord, Memo, QuantizedNote } from '../../core/types.ts';
+import type { AnalysisRecord, Memo } from '../../core/types.ts';
 import type { MemoRepository } from '../../storage/memoRepository.ts';
+import type { NotePlaybackControls } from '../notePlayback.ts';
 import { PianoRoll } from './PianoRoll.tsx';
 
 interface TranscriptionPanelProps {
   memo: Memo;
   repository: MemoRepository;
   isRunning: boolean;
-  isPlayingNotes: boolean;
+  notePlayback: NotePlaybackControls;
   onRetranscribe: (memo: Memo) => void;
-  onToggleNotePlayback: (memo: Memo, notes: QuantizedNote[]) => void;
 }
 
 const WARNING_TEXT: Record<string, string> = {
@@ -40,9 +40,8 @@ export function TranscriptionPanel({
   memo,
   repository,
   isRunning,
-  isPlayingNotes,
+  notePlayback,
   onRetranscribe,
-  onToggleNotePlayback,
 }: TranscriptionPanelProps) {
   const [analysis, setAnalysis] = useState<AnalysisRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -96,6 +95,10 @@ export function TranscriptionPanel({
 
   const { notes, quality, tuning } = analysis;
   const stale = isStale(analysis.algorithmId, analysis.algorithmVersion);
+  // Named apart from the analysis `status` above; these are unrelated states.
+  const transportStatus = notePlayback.statusFor(memo.id);
+  const isPlayingNotes = transportStatus === 'playing';
+  const isPaused = transportStatus === 'paused';
 
   return (
     <div className="transcription">
@@ -117,21 +120,49 @@ export function TranscriptionPanel({
             way to judge it — a wrong note is far more obvious played back than
             read as a letter.
           */}
-          <button
-            type="button"
-            className="button transcription__play"
-            aria-label={
-              isPlayingNotes
-                ? `Stop playing notes for ${memo.title}`
-                : `Play notes for ${memo.title}`
-            }
-            onClick={() => onToggleNotePlayback(memo, notes)}
-          >
-            <span aria-hidden="true">{isPlayingNotes ? '❚❚' : '▶'}</span>{' '}
-            {isPlayingNotes ? 'Stop notes' : 'Play notes'}
-          </button>
+          <div className="transcription__transport" role="group" aria-label="Note playback">
+            <button
+              type="button"
+              className="button"
+              aria-label={
+                // Mirrors the visible text exactly — the paused state was
+                // announcing "Play" while showing "Resume".
+                isPlayingNotes
+                  ? `Pause notes for ${memo.title}`
+                  : isPaused
+                    ? `Resume notes for ${memo.title}`
+                    : `Play notes for ${memo.title}`
+              }
+              onClick={() => notePlayback.toggle(memo, notes)}
+            >
+              <span aria-hidden="true">{isPlayingNotes ? '❚❚' : '▶'}</span>{' '}
+              {isPlayingNotes ? 'Pause' : isPaused ? 'Resume' : 'Play notes'}
+            </button>
+            <button
+              type="button"
+              className="button"
+              aria-label={`Restart notes for ${memo.title}`}
+              // Idle already means the playhead is at the start, so there is
+              // nothing for this to do.
+              disabled={transportStatus === 'idle'}
+              onClick={() => notePlayback.restart(memo, notes)}
+            >
+              <span aria-hidden="true">↺</span> Restart
+            </button>
+          </div>
 
-          <PianoRoll analysis={analysis} durationMs={memo.capture.durationMs} />
+          <PianoRoll
+            notes={notes}
+            contour={{
+              hz: new Float32Array(analysis.f0.hz),
+              sampleRate: analysis.input.sampleRate,
+              hopSizeSamples: analysis.input.hopSizeSamples,
+              frameSizeSamples: analysis.input.frameSizeSamples,
+            }}
+            durationMs={memo.capture.durationMs}
+            isPlaying={isPlayingNotes}
+            getPositionMs={notePlayback.positionMs}
+          />
 
           {/*
             The accessible equivalent of the chart above. Listing the note

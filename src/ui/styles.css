@@ -386,8 +386,11 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.transcription__play {
-  margin-bottom: 0.25rem;
+.transcription__transport {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
 }
 
 .transcription__actions {
@@ -471,6 +474,14 @@ h2 {
 
 .piano-roll__note {
   fill: var(--accent);
+}
+
+.piano-roll__playhead {
+  stroke: var(--focus);
+  stroke-width: 2;
+  /* The line is moved by a transform every frame; letting the browser hoist it
+     to its own layer keeps that off the main paint path. */
+  will-change: transform;
 }
 
 .memo-row__transcription-status {
