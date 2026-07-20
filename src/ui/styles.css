@@ -355,6 +355,13 @@ h2 {
 .transcription {
   /* Full row width, below the controls, since the row is a flex wrap. */
   flex: 1 1 100%;
+  /*
+   * Without this the piano roll never scrolls. A flex item defaults to
+   * min-width: auto, meaning it refuses to shrink below its content's
+   * intrinsic width — so a wide chart stretches the whole row off-screen
+   * instead of overflowing inside its own scroll container.
+   */
+  min-width: 0;
   margin-top: 0.5rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
@@ -377,6 +384,10 @@ h2 {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.9375rem;
   overflow-wrap: anywhere;
+}
+
+.transcription__play {
+  margin-bottom: 0.25rem;
 }
 
 .transcription__actions {
@@ -426,10 +437,19 @@ h2 {
 
 .piano-roll {
   overflow-x: auto;
+  /* Belt and braces: the chart must never be the thing that widens the page. */
+  max-width: 100%;
+  overscroll-behavior-x: contain;
   margin-top: 0.5rem;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+}
+
+/* Keyboard users need to be able to reach the scroll area itself. */
+.piano-roll:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .piano-roll__svg {

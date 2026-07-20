@@ -4,7 +4,7 @@ import {
   formatDurationSpoken,
   formatTimestamp,
 } from '../../core/format.ts';
-import type { Memo } from '../../core/types.ts';
+import type { Memo, QuantizedNote } from '../../core/types.ts';
 import type { MemoRepository } from '../../storage/memoRepository.ts';
 import { TranscriptionPanel } from './TranscriptionPanel.tsx';
 
@@ -13,9 +13,11 @@ interface MemoRowProps {
   isCurrent: boolean;
   isPlaying: boolean;
   isTranscribing: boolean;
+  isPlayingNotes: boolean;
   repository: MemoRepository;
   onTogglePlay: (memo: Memo) => void;
   onTranscribe: (memo: Memo) => void;
+  onToggleNotePlayback: (memo: Memo, notes: QuantizedNote[]) => void;
   onRename: (memo: Memo, title: string) => void;
   onExport: (memo: Memo) => void;
   onDelete: (memo: Memo) => void;
@@ -41,9 +43,11 @@ export function MemoRow({
   isCurrent,
   isPlaying,
   isTranscribing,
+  isPlayingNotes,
   repository,
   onTogglePlay,
   onTranscribe,
+  onToggleNotePlayback,
   onRename,
   onExport,
   onDelete,
@@ -257,7 +261,9 @@ export function MemoRow({
           memo={memo}
           repository={repository}
           isRunning={isTranscribing}
+          isPlayingNotes={isPlayingNotes}
           onRetranscribe={onTranscribe}
+          onToggleNotePlayback={onToggleNotePlayback}
         />
       )}
     </li>

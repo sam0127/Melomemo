@@ -90,6 +90,10 @@ Parameters worth turning when a real recording transcribes badly all live in
 for its value. **Bump `mpmEngine.version` after changing any of them** — that's
 what marks existing transcriptions stale so they can be recomputed.
 
+**Play notes** synthesises the transcription as sine tones, separately from the
+original recording — hearing the two back to back is the quickest way to judge
+whether a transcription is right. Only one of the two plays at a time.
+
 Every memo's **Notes → Show details** panel gives the engine version, what
 fraction of frames were pitched, median confidence, the detected tuning offset,
 and per-note cents and confidence. The piano roll draws the raw pitch contour

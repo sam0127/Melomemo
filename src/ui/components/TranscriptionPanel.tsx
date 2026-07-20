@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { isStale } from '../../analysis/registry.ts';
 import { midiToName } from '../../core/pitch.ts';
-import type { AnalysisRecord, Memo } from '../../core/types.ts';
+import type { AnalysisRecord, Memo, QuantizedNote } from '../../core/types.ts';
 import type { MemoRepository } from '../../storage/memoRepository.ts';
 import { PianoRoll } from './PianoRoll.tsx';
 
@@ -9,7 +9,9 @@ interface TranscriptionPanelProps {
   memo: Memo;
   repository: MemoRepository;
   isRunning: boolean;
+  isPlayingNotes: boolean;
   onRetranscribe: (memo: Memo) => void;
+  onToggleNotePlayback: (memo: Memo, notes: QuantizedNote[]) => void;
 }
 
 const WARNING_TEXT: Record<string, string> = {
@@ -38,7 +40,9 @@ export function TranscriptionPanel({
   memo,
   repository,
   isRunning,
+  isPlayingNotes,
   onRetranscribe,
+  onToggleNotePlayback,
 }: TranscriptionPanelProps) {
   const [analysis, setAnalysis] = useState<AnalysisRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,6 +112,25 @@ export function TranscriptionPanel({
         </p>
       ) : (
         <>
+          {/*
+            Hearing the transcription next to the recording is the practical
+            way to judge it — a wrong note is far more obvious played back than
+            read as a letter.
+          */}
+          <button
+            type="button"
+            className="button transcription__play"
+            aria-label={
+              isPlayingNotes
+                ? `Stop playing notes for ${memo.title}`
+                : `Play notes for ${memo.title}`
+            }
+            onClick={() => onToggleNotePlayback(memo, notes)}
+          >
+            <span aria-hidden="true">{isPlayingNotes ? '❚❚' : '▶'}</span>{' '}
+            {isPlayingNotes ? 'Stop notes' : 'Play notes'}
+          </button>
+
           <PianoRoll analysis={analysis} durationMs={memo.capture.durationMs} />
 
           {/*

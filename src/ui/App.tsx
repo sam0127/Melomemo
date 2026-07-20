@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatDurationSpoken } from '../core/format.ts';
 import type { AppError } from '../core/result.ts';
-import type { CapturedAudio, Memo } from '../core/types.ts';
+import type { CapturedAudio, Memo, QuantizedNote } from '../core/types.ts';
 import { PlaybackService } from '../playback/PlaybackService.ts';
+import { TonePlayer } from '../playback/TonePlayer.ts';
 import { exportArchive, exportAudio, importArchive } from '../storage/archive.ts';
 import { IdbMemoRepository } from '../storage/memoRepository.ts';
 import { probeStorageWritable } from '../storage/persistence.ts';
@@ -25,6 +26,7 @@ export function App() {
   // state, so neither belongs in a hook.
   const repository = useMemo(() => new IdbMemoRepository(), []);
   const playback = useMemo(() => new PlaybackService(), []);
+  const tonePlayer = useMemo(() => new TonePlayer(), []);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -35,6 +37,7 @@ export function App() {
   const [storageWritable, setStorageWritable] = useState(true);
   const [currentMemoId, setCurrentMemoId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [notePlaybackMemoId, setNotePlaybackMemoId] = useState<string | null>(null);
 
   const memosApi = useMemos(repository);
   const { memos, loading, saveCaptured, remove, rename } = memosApi;
@@ -55,6 +58,16 @@ export function App() {
   }, [playback]);
 
   useEffect(() => () => playback.dispose(), [playback]);
+
+  // The player is authoritative; this only mirrors it for rendering. Nothing
+  // else writes notePlaybackMemoId, so the button cannot disagree with what is
+  // actually sounding — including when a sequence ends on its own.
+  useEffect(
+    () => tonePlayer.subscribe((state) => setNotePlaybackMemoId(state.memoId)),
+    [tonePlayer],
+  );
+
+  useEffect(() => () => tonePlayer.dispose(), [tonePlayer]);
 
   // Private Browsing exposes IndexedDB but rejects writes, so the app has to
   // probe rather than feature-detect, and say so before a take is lost.
@@ -86,11 +99,12 @@ export function App() {
     setNotice(null);
     // Playback and capture competing for the audio session goes badly on iOS.
     playback.reset();
+    tonePlayer.stop();
     // Only announce success. The failure path already surfaces an alert, and
     // telling a screen-reader user that recording began when it did not is
     // worse than saying nothing.
     if (await recorder.start()) announce('Recording started.');
-  }, [playback, recorder, announce]);
+  }, [playback, tonePlayer, recorder, announce]);
 
   const handleStop = useCallback(() => {
     recorder.stop();
@@ -108,9 +122,12 @@ export function App() {
         setUiError(audio.error);
         return;
       }
+      // Same exclusion in the other direction: starting the recording stops
+      // any transcription that is playing.
+      tonePlayer.stop();
       await playback.play(memo.id, audio.value.data, audio.value.mimeType);
     },
-    [currentMemoId, isPlaying, playback, repository],
+    [currentMemoId, isPlaying, playback, repository, tonePlayer],
   );
 
   const handleDelete = useCallback(
@@ -120,6 +137,22 @@ export function App() {
       announce(`Deleted ${memo.title}.`);
     },
     [playback, remove, announce],
+  );
+
+  const handleToggleNotePlayback = useCallback(
+    async (memo: Memo, notes: QuantizedNote[]) => {
+      // Read from the player rather than from render state, so a rapid toggle
+      // cannot act on a value that has already moved on.
+      if (tonePlayer.currentMemoId === memo.id) {
+        tonePlayer.stop();
+        return;
+      }
+      // The recording and its transcription played at once are just noise, and
+      // on iOS two sources competing for the audio session goes badly.
+      playback.pause();
+      await tonePlayer.play(memo.id, notes);
+    },
+    [playback, tonePlayer],
   );
 
   const handleTranscribe = useCallback(
@@ -299,8 +332,10 @@ export function App() {
               isPlaying={isPlaying}
               repository={repository}
               isTranscribing={transcription.isRunning}
+              notePlaybackMemoId={notePlaybackMemoId}
               onTogglePlay={handleTogglePlay}
               onTranscribe={handleTranscribe}
+              onToggleNotePlayback={handleToggleNotePlayback}
               onRename={handleRename}
               onExport={handleExportOne}
               onDelete={handleDelete}
