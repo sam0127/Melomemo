@@ -7,6 +7,7 @@ interface MemoListProps {
   currentMemoId: MemoId | null;
   isPlaying: boolean;
   onTogglePlay: (memo: Memo) => void;
+  onRename: (memo: Memo, title: string) => void;
   onExport: (memo: Memo) => void;
   onDelete: (memo: Memo) => void;
 }
@@ -16,6 +17,7 @@ export function MemoList({
   currentMemoId,
   isPlaying,
   onTogglePlay,
+  onRename,
   onExport,
   onDelete,
 }: MemoListProps) {
@@ -70,6 +72,7 @@ export function MemoList({
           isCurrent={memo.id === currentMemoId}
           isPlaying={isPlaying}
           onTogglePlay={onTogglePlay}
+          onRename={onRename}
           onExport={onExport}
           onDelete={handleDelete}
         />

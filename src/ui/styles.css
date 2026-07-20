@@ -255,7 +255,10 @@ h2 {
 .memo-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  /* Wraps so a third action button drops to its own line on a narrow phone
+     rather than squeezing the title to nothing. */
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
   padding: 0.625rem 0.75rem;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -279,10 +282,39 @@ h2 {
 }
 
 .memo-row__meta {
-  flex: 1 1 auto;
+  /* A basis wide enough that the actions wrap below before the title starts
+     truncating. */
+  flex: 1 1 10rem;
   min-width: 0;
   display: flex;
   flex-direction: column;
+}
+
+.memo-row__rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.memo-row__input {
+  flex: 1 1 10rem;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0 0.625rem;
+  /* 16px minimum: anything smaller makes iOS Safari zoom on focus. */
+  font-size: 1rem;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .memo-row__title {

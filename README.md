@@ -117,4 +117,3 @@ guards against don't reproduce there. Worth exercising specifically:
 - **Browser storage is evictable.** The app requests persistent storage after
   your first recording, but it's granted at the browser's discretion. Back up
   anything you care about.
-- Renaming memos is supported by the storage layer but has no UI yet.

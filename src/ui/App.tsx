@@ -36,7 +36,7 @@ export function App() {
   const [isPlaying, setIsPlaying] = useState(false);
 
   const memosApi = useMemos(repository);
-  const { memos, loading, saveCaptured, remove } = memosApi;
+  const { memos, loading, saveCaptured, remove, rename } = memosApi;
 
   // Hand the rendered <audio> to the playback service once it exists.
   useEffect(() => {
@@ -117,6 +117,16 @@ export function App() {
       announce(`Deleted ${memo.title}.`);
     },
     [playback, remove, announce],
+  );
+
+  const handleRename = useCallback(
+    async (memo: Memo, title: string) => {
+      await rename(memo.id, title);
+      // The row's own text changed silently; without this a screen-reader user
+      // gets no confirmation the edit took.
+      announce(`Renamed to ${title}.`);
+    },
+    [rename, announce],
   );
 
   const handleExportOne = useCallback(
@@ -277,6 +287,7 @@ export function App() {
               currentMemoId={currentMemoId}
               isPlaying={isPlaying}
               onTogglePlay={handleTogglePlay}
+              onRename={handleRename}
               onExport={handleExportOne}
               onDelete={handleDelete}
             />
