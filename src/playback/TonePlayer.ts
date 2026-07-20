@@ -122,7 +122,7 @@ export class TonePlayer {
         noteStart + Math.max(note.durationMs / 1000, ATTACK_S + RELEASE_S);
 
       const oscillator = context.createOscillator();
-      oscillator.type = 'sine';
+      oscillator.type = 'sawtooth';
       oscillator.frequency.value = midiToHz(note.midi);
 
       const gain = context.createGain();
