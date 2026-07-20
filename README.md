@@ -9,19 +9,18 @@ then an editable MIDI track alongside the raw audio.
 
 ## Setup
 
-Requires **Node 22+** (Vite 8 needs `^20.19 || >=22.12`).
+Requires **Node 22+** (Vite 8 needs `^20.19 || >=22.12`). There's an `.nvmrc`,
+so:
 
 ```
-nvm install 22
-nvm use 22
+nvm use
 npm install
 npm run dev
 ```
 
-> **Note on `nvm use`:** on Windows this needs an **elevated** terminal — it
-> rewrites the `C:\Program Files\nodejs` symlink. If it fails with
-> `exit status 5: Access is denied`, reopen PowerShell as Administrator and run
-> it again. Until then `node -v` will still report the old version.
+> On Windows, `nvm use` needs an **elevated** terminal — it rewrites the
+> `C:\Program Files\nodejs` symlink. If it fails with
+> `exit status 5: Access is denied`, reopen PowerShell as Administrator.
 
 | Command | Does |
 | --- | --- |
