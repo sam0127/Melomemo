@@ -152,6 +152,48 @@ export function PianoRoll({
     // geometry is recreated each render but is a pure function of these.
   }, [isPlaying, getPositionMs, width, durationMs, notes]);
 
+  /*
+   * Touch drags, which CSS alone cannot deliver here.
+   *
+   * `touch-action` is only hit-tested against the top-level <svg>, never
+   * against individual shapes inside it, so `touch-action: none` on a note
+   * rect is silently inert. On Android that left every note drag being claimed
+   * by the browser: vertical drags triggered pull-to-refresh, horizontal ones
+   * panned the scroller, and the resulting pointercancel killed the drag.
+   *
+   * Putting `touch-action: none` on the <svg> would fix it by making the roll
+   * unscrollable, which is worse. Instead the default is cancelled only for
+   * gestures that begin on a note — the listener must be non-passive, since a
+   * passive one cannot preventDefault, and it has to be attached natively
+   * because React's synthetic touch listeners are passive.
+   */
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!editor || !svg) return;
+
+    const onTouchStart = (event: TouchEvent) => {
+      const target = event.target as Element | null;
+      // Matched on the note's own class, not on [data-editable] — the <svg>
+      // also carries that attribute (for its touch-action rule), so an
+      // attribute selector would match every touch on empty space too and
+      // leave the roll unscrollable.
+      //
+      // Cancelling at touchstart is what stops the browser claiming the
+      // gesture; by touchmove the decision is already made.
+      if (target?.closest?.('.piano-roll__note')) event.preventDefault();
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (dragRef.current) event.preventDefault();
+    };
+
+    svg.addEventListener('touchstart', onTouchStart, { passive: false });
+    svg.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => {
+      svg.removeEventListener('touchstart', onTouchStart);
+      svg.removeEventListener('touchmove', onTouchMove);
+    };
+  }, [editor]);
+
   if (notes.length === 0 && !editor) return null;
 
   const announce = (message: string) => {
@@ -332,6 +374,7 @@ export function PianoRoll({
           // stays a plain container and each note carries its own label.
           role={editor ? undefined : 'img'}
           aria-label={editor ? undefined : summary}
+          data-editable={editor ? true : undefined}
           onDoubleClick={editor ? handleBackgroundDoubleClick : undefined}
         >
           {Array.from({ length: semitoneSpan }, (_, row) => {

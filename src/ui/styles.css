@@ -448,7 +448,11 @@ h2 {
   overflow-x: auto;
   /* Belt and braces: the chart must never be the thing that widens the page. */
   max-width: 100%;
-  overscroll-behavior-x: contain;
+  /*
+   * Both axes, not just x. A vertical drag inside the roll would otherwise
+   * chain to the page and trigger Android's pull-to-refresh.
+   */
+  overscroll-behavior: contain;
   margin-top: 0.5rem;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -493,11 +497,20 @@ h2 {
 .piano-roll__note[data-editable] {
   cursor: grab;
   /*
-   * Without this, a touch drag on a note pans the scroll container instead of
-   * moving the note. Only the notes opt out of panning — empty space still
-   * scrolls, which is how touch users get around the roll.
+   * No touch-action here: the property is only hit-tested against the
+   * top-level <svg>, never against the shapes inside it, so setting it on a
+   * note is silently ignored. Touch dragging is handled by a non-passive
+   * touchstart listener in PianoRoll instead.
    */
-  touch-action: none;
+}
+
+.piano-roll__svg[data-editable] {
+  /*
+   * Suppresses double-tap-to-zoom so a double tap produces a dblclick and
+   * creates a note. Panning and pinch-zoom are unaffected. This one does work
+   * on the <svg>, which is the only SVG element touch-action applies to.
+   */
+  touch-action: manipulation;
 }
 
 .piano-roll__note[data-dragging] {

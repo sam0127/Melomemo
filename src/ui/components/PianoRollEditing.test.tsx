@@ -153,6 +153,43 @@ describe('pointer editing', () => {
     expect(startMs).toBeCloseTo(2000, 0);
   });
 
+  /**
+   * Regression cover for a bug found on an Android device: notes could not be
+   * dragged at all. `touch-action` is only hit-tested against the top-level
+   * <svg>, so the `touch-action: none` that had been set on each note rect was
+   * inert, and Chrome claimed every drag — vertical ones as pull-to-refresh,
+   * horizontal ones as a pan.
+   */
+  describe('touch gestures', () => {
+    function dispatchTouch(target: Element, type: string): boolean {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      target.dispatchEvent(event);
+      return event.defaultPrevented;
+    }
+
+    it('cancels the browser gesture when a touch starts on a note', () => {
+      renderRoll();
+      const rect = noteRect(/Note C4/);
+      // Cancelling at touchstart is the only moment that works; by touchmove
+      // the browser has already committed to scrolling.
+      expect(dispatchTouch(rect, 'touchstart')).toBe(true);
+    });
+
+    it('leaves touches on empty space alone so the roll still scrolls', () => {
+      const { container } = renderRoll();
+      const background = container.querySelector('.piano-roll__row')!;
+      expect(dispatchTouch(background, 'touchstart')).toBe(false);
+    });
+
+    it('does not interfere when the roll is read-only', () => {
+      const { container } = render(
+        <PianoRoll notes={NOTES} durationMs={DURATION_MS} isPlaying={false} />,
+      );
+      const rect = container.querySelector('.piano-roll__note')!;
+      expect(dispatchTouch(rect, 'touchstart')).toBe(false);
+    });
+  });
+
   it('still renders an editable surface when the score is empty', () => {
     const { container } = renderRoll([]);
     // A failed transcription must leave somewhere to build a melody by hand.
