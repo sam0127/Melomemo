@@ -3,10 +3,10 @@
 Record a tune you're humming or whistling before you lose it. A local-first
 PWA — recordings never leave the device.
 
-**Current:** record, save, browse, play back, export/import, and automatic
-pitch transcription into equal temperament.
-**Next:** save the transcription as an editable MIDI track alongside the raw
-audio, then let it be edited.
+**Current:** record, save, browse, play back, export/import, automatic pitch
+transcription into equal temperament, and note editing on the piano roll —
+move, add, and delete notes, with the raw recording untouched underneath.
+**Next:** MIDI file export, rhythm quantisation.
 
 ## Setup
 
@@ -98,9 +98,32 @@ follow it. Only one of the two audio sources plays at a time.
 
 The piano roll's coordinate maths lives in
 [`src/ui/pianoRollGeometry.ts`](src/ui/pianoRollGeometry.ts) with both forward
-(time→x, pitch→y) and inverse mappings — the inverses are unused by rendering
-but are the foundation for editing notes on the roll, so hit-testing and
-dragging resolve through the same maths the renderer draws with.
+(time→x, pitch→y) and inverse mappings, so rendering, hit-testing, and dragging
+all resolve through the same arithmetic.
+
+### Editing notes
+
+Notes on the roll can be moved, added, and deleted. Every gesture has a
+keyboard equivalent, because a drag-only editor is unusable without a pointer:
+
+| Action | Pointer | Keyboard |
+| --- | --- | --- |
+| Move pitch | Drag up/down | Focus note, `↑` / `↓` |
+| Move in time | Drag left/right | `←` / `→` (hold `Shift` for 10 ms steps) |
+| Add | Double-click empty space | — |
+| Delete | Select, then **Delete note** | `Delete` or `Backspace` |
+| Deselect | — | `Escape` |
+
+**The first edit forks the melody away from the machine.** Until then the
+transcription is what you see. From that moment a `ScoreDocument` exists and
+owns the display, playback, and note list — and **re-running analysis never
+touches it**. That is the guarantee the three-layer model exists for: an
+improved pitch algorithm may replace an `AnalysisRecord` freely, but it can
+never silently overwrite notes you placed by hand. **Reset to transcription**
+is the only way back, and it asks first.
+
+Edits persist per gesture rather than on a save button, so a closed tab loses
+nothing. The audio itself is never modified by any of this.
 
 Every memo's **Notes → Show details** panel gives the engine version, what
 fraction of frames were pitched, median confidence, the detected tuning offset,
@@ -185,5 +208,8 @@ guards against don't reproduce there. Worth exercising specifically:
   beat; that needs tempo estimation, which is deferred.
 - **Transcription assumes one note at a time**, which is what humming and
   whistling are. Chords are out of scope.
-- **Backups don't include transcriptions.** They're derived data and are
-  recomputed on demand, so an imported memo shows a Transcribe button.
+- **Backups include your edits but not transcriptions.** Hand-edited notes
+  can't be recreated, so they travel with the archive. Analyses are left out
+  deliberately — they're recomputable from the audio, and their dense per-frame
+  pitch data would multiply every backup's size. An imported memo therefore
+  shows a Transcribe button.

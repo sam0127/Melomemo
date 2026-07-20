@@ -1,6 +1,11 @@
 import { extensionForMimeType } from '../capture/mimeNegotiation.ts';
 import { failure, ok, type Result } from '../core/result.ts';
-import { MEMO_SCHEMA_VERSION, type AudioAsset, type Memo } from '../core/types.ts';
+import {
+  MEMO_SCHEMA_VERSION,
+  type AudioAsset,
+  type Memo,
+  type ScoreDocument,
+} from '../core/types.ts';
 import type { MemoRepository } from './memoRepository.ts';
 
 /**
@@ -18,13 +23,27 @@ import type { MemoRepository } from './memoRepository.ts';
  */
 
 export const ARCHIVE_FORMAT = 'melomemo-archive';
-export const ARCHIVE_VERSION = 1;
+/**
+ * 2 — added `score`.
+ *
+ * Bumped rather than added silently: a v1 reader would drop hand edits without
+ * saying so, and the version check makes it refuse the file instead.
+ */
+export const ARCHIVE_VERSION = 2;
 
 interface ArchiveEntry {
   memo: Memo;
   mimeType: string;
   /** Base64. Inflates size ~33%, but keeps the archive a single self-contained file. */
   audioBase64: string;
+  /**
+   * The user's edited notes, when they have any.
+   *
+   * Included because hand edits cannot be recreated — unlike the analysis,
+   * which is deliberately left out: it is recomputable from the audio, and its
+   * dense per-frame f0 buffers would multiply the size of every backup.
+   */
+  score?: ScoreDocument;
 }
 
 interface ArchiveFile {
@@ -108,10 +127,13 @@ export async function exportArchive(
     // A memo whose audio is missing is skipped rather than failing the whole
     // export — a partial backup beats no backup.
     if (!audio.ok) continue;
+
+    const score = await repository.getScore(memo.id);
     entries.push({
       memo,
       mimeType: audio.value.mimeType,
       audioBase64: toBase64(audio.value.data),
+      ...(score.ok ? { score: score.value } : {}),
     });
   }
 
@@ -187,7 +209,20 @@ export async function importArchive(
 
     try {
       const data = fromBase64(entry.audioBase64);
-      const memo: Memo = { ...entry.memo, schemaVersion: MEMO_SCHEMA_VERSION };
+      const memo: Memo = {
+        ...entry.memo,
+        schemaVersion: MEMO_SCHEMA_VERSION,
+        /*
+         * Analyses are not exported, so the pointer that came with the memo
+         * refers to a row that does not exist here. Left in place it reads as
+         * "Transcribed", renders nothing, and — because the Transcribe button
+         * only appears for memos with no analysis or a failed one — leaves the
+         * memo permanently stuck. Clearing it restores the offer to transcribe.
+         */
+        analysisState: null,
+        // Likewise: only claim a score if one actually travelled with it.
+        currentScoreId: entry.score ? entry.score.id : null,
+      };
       const audio: AudioAsset = {
         memoId: memo.id,
         data,
@@ -195,8 +230,18 @@ export async function importArchive(
         byteLength: data.byteLength,
       };
       const saved = await repository.saveMemo(memo, audio);
-      if (saved.ok) imported++;
-      else return saved;
+      if (!saved.ok) return saved;
+
+      if (entry.score) {
+        // Re-pointed at this memo in case the archive was hand-edited; a score
+        // filed under the wrong memo would be invisible.
+        const restored = await repository.saveScore({
+          ...entry.score,
+          memoId: memo.id,
+        });
+        if (!restored.ok) return restored;
+      }
+      imported++;
     } catch {
       skipped++;
     }

@@ -3,6 +3,7 @@ import { isStale } from '../../analysis/registry.ts';
 import { midiToName } from '../../core/pitch.ts';
 import type { AnalysisRecord, Memo } from '../../core/types.ts';
 import type { MemoRepository } from '../../storage/memoRepository.ts';
+import { useScore } from '../hooks/useScore.ts';
 import type { NotePlaybackControls } from '../notePlayback.ts';
 import { PianoRoll } from './PianoRoll.tsx';
 
@@ -46,6 +47,12 @@ export function TranscriptionPanel({
   const [analysis, setAnalysis] = useState<AnalysisRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [showDetails, setShowDetails] = useState(false);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+
+  // The user's editable layer. Until they touch a note this mirrors the
+  // analysis; from the first edit it is an independent document that
+  // re-transcription never overwrites.
+  const scoreApi = useScore(repository, memo, analysis);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,7 +100,10 @@ export function TranscriptionPanel({
     );
   }
 
-  const { notes, quality, tuning } = analysis;
+  const { quality, tuning } = analysis;
+  // What the panel draws, plays, and lists: the user's notes once edited,
+  // otherwise the transcription (via the hook's id-stable candidate).
+  const notes = scoreApi.notes;
   const stale = isStale(analysis.algorithmId, analysis.algorithmVersion);
   // Named apart from the analysis `status` above; these are unrelated states.
   const transportStatus = notePlayback.statusFor(memo.id);
@@ -109,11 +119,21 @@ export function TranscriptionPanel({
         </p>
       )}
 
-      {notes.length === 0 ? (
+      {notes.length === 0 && (
         <p className="transcription__status">
           No notes were found — try humming a little louder or more steadily.
+          You can still add notes by hand below.
         </p>
-      ) : (
+      )}
+
+      {scoreApi.edited && (
+        <p className="transcription__edited">
+          <strong>Edited</strong> — showing your notes, not the machine
+          transcription.
+        </p>
+      )}
+
+      {
         <>
           {/*
             Hearing the transcription next to the recording is the practical
@@ -162,18 +182,25 @@ export function TranscriptionPanel({
             durationMs={memo.capture.durationMs}
             isPlaying={isPlayingNotes}
             getPositionMs={notePlayback.positionMs}
+            editor={{
+              onMove: scoreApi.moveNote,
+              onCreate: scoreApi.createNote,
+              onDelete: scoreApi.deleteNote,
+            }}
           />
 
           {/*
             The accessible equivalent of the chart above. Listing the note
             names in order is the part a screen-reader user can actually use.
           */}
-          <p className="transcription__notes">
-            <span className="visually-hidden">Notes in order: </span>
-            {notes.map((note) => midiToName(note.midi)).join(' ')}
-          </p>
+          {notes.length > 0 && (
+            <p className="transcription__notes">
+              <span className="visually-hidden">Notes in order: </span>
+              {notes.map((note) => midiToName(note.midi)).join(' ')}
+            </p>
+          )}
         </>
-      )}
+      }
 
       {quality.warnings.map((warning) => (
         <p key={warning} className="transcription__warning">
@@ -202,6 +229,48 @@ export function TranscriptionPanel({
         >
           Transcribe again
         </button>
+
+        {scoreApi.edited &&
+          (confirmingReset ? (
+            <div
+              className="memo-row__confirm"
+              role="group"
+              aria-label="Discard your edits?"
+            >
+              <span className="memo-row__confirm-text">Discard edits?</span>
+              <button
+                type="button"
+                className="button button--danger"
+                // Keeps a keyboard user's focus inside the choice they opened.
+                autoFocus
+                onClick={() => {
+                  setConfirmingReset(false);
+                  void scoreApi.reset();
+                }}
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                className="button"
+                onClick={() => setConfirmingReset(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="button"
+              // The confirmation is not ceremony: this throws away hand edits,
+              // which is the one loss the score layer exists to prevent
+              // happening silently.
+              aria-label={`Reset ${memo.title} to the machine transcription`}
+              onClick={() => setConfirmingReset(true)}
+            >
+              Reset to transcription
+            </button>
+          ))}
       </div>
 
       {showDetails && (

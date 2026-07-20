@@ -125,6 +125,72 @@ describe('archive', () => {
     }
   });
 
+  it('carries hand-edited notes through a round trip', async () => {
+    // Edits cannot be recreated from the audio, unlike the analysis — losing
+    // them to a backup would be the worst outcome the score layer allows.
+    const source = new InMemoryMemoRepository();
+    const { memo, audio } = await createMemoFromCapture(makeCaptured(7));
+    await source.saveMemo(memo, audio);
+    await source.saveScore({
+      id: 'score-1',
+      memoId: memo.id,
+      createdAt: 1,
+      updatedAt: 2,
+      seededFromAnalysisId: 'analysis-1',
+      userEdited: true,
+      ppq: 480,
+      tempoBpm: 120,
+      notes: [
+        { id: 'n1', midi: 67, startMs: 0, durationMs: 400, centsDeviation: 0, confidence: 1 },
+      ],
+    });
+
+    const download = captureDownload();
+    await exportArchive(source);
+
+    const target = new InMemoryMemoRepository();
+    await importArchive(target, download.file());
+
+    const restored = await target.getScore(memo.id);
+    expect(restored.ok).toBe(true);
+    if (restored.ok) {
+      expect(restored.value.notes[0]!.midi).toBe(67);
+      expect(restored.value.userEdited).toBe(true);
+    }
+    const restoredMemo = await target.getMemo(memo.id);
+    expect(restoredMemo.ok && restoredMemo.value.currentScoreId).toBe('score-1');
+  });
+
+  it('clears the analysis pointer on import so the memo can be transcribed', async () => {
+    // Analyses are not exported. A memo still claiming one would read as
+    // transcribed, show nothing, and offer no way to fix itself.
+    const source = new InMemoryMemoRepository();
+    const { memo, audio } = await createMemoFromCapture(makeCaptured(8));
+    await source.saveMemo(
+      {
+        ...memo,
+        analysisState: {
+          currentAnalysisId: 'analysis-gone',
+          algorithmId: 'mpm',
+          algorithmVersion: '1.0.0',
+          status: 'ok',
+          updatedAt: 1,
+        },
+      },
+      audio,
+    );
+
+    const download = captureDownload();
+    await exportArchive(source);
+
+    const target = new InMemoryMemoRepository();
+    await importArchive(target, download.file());
+
+    const restored = await target.getMemo(memo.id);
+    expect(restored.ok && restored.value.analysisState).toBeNull();
+    expect(restored.ok && restored.value.currentScoreId).toBeNull();
+  });
+
   it('rejects a file that is not a Melomemo backup', async () => {
     const repository = new InMemoryMemoRepository();
     const file = new File(['{"hello":"world"}'], 'notes.json', {

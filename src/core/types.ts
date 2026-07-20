@@ -189,6 +189,16 @@ export interface AnalysisRecord {
 // --- v3: the user's score. ---
 
 /**
+ * A note in the user's score. Unlike analysis notes, these carry a stable id:
+ * editing operations (drag, delete, keyboard nudges) must reference a note
+ * across re-sorts and re-renders, and "the third note" stops meaning anything
+ * the moment a drag moves a note past its neighbour.
+ */
+export interface ScoreNote extends QuantizedNote {
+  id: string;
+}
+
+/**
  * The user's editable MIDI. Seeded from an AnalysisRecord once, then wholly
  * independent of it.
  */
@@ -207,7 +217,8 @@ export interface ScoreDocument {
   /** Ticks per quarter note, for MIDI export. */
   ppq: number;
   tempoBpm: number;
-  notes: QuantizedNote[];
+  /** Kept sorted by startMs; every edit operation preserves this. */
+  notes: ScoreNote[];
 }
 
 /** A recording handed from the capture layer to the UI, before it is saved. */

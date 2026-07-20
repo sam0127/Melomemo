@@ -379,6 +379,12 @@ h2 {
   color: var(--text-muted);
 }
 
+.transcription__edited {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
 .transcription__notes {
   margin: 0.5rem 0 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -482,6 +488,50 @@ h2 {
   /* The line is moved by a transform every frame; letting the browser hoist it
      to its own layer keeps that off the main paint path. */
   will-change: transform;
+}
+
+.piano-roll__note[data-editable] {
+  cursor: grab;
+  /*
+   * Without this, a touch drag on a note pans the scroll container instead of
+   * moving the note. Only the notes opt out of panning — empty space still
+   * scrolls, which is how touch users get around the roll.
+   */
+  touch-action: none;
+}
+
+.piano-roll__note[data-dragging] {
+  cursor: grabbing;
+}
+
+.piano-roll__note[data-selected] {
+  stroke: var(--focus);
+  stroke-width: 2;
+}
+
+/* SVG elements take focus but get no default indicator anywhere. */
+.piano-roll__note:focus-visible {
+  outline: none;
+  stroke: var(--focus);
+  stroke-width: 2.5;
+}
+
+.piano-roll__editbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 2.75rem;
+  margin-top: 0.375rem;
+}
+
+.piano-roll__selection {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.875rem;
+}
+
+.piano-roll__hint {
+  font-size: 0.875rem;
+  color: var(--text-muted);
 }
 
 .memo-row__transcription-status {

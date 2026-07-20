@@ -4,6 +4,7 @@ import type {
   AudioAsset,
   Memo,
   MemoId,
+  ScoreDocument,
 } from '../core/types.ts';
 import { MEMO_SCHEMA_VERSION } from '../core/types.ts';
 import {
@@ -50,6 +51,19 @@ export interface MemoRepository {
   getAnalysis(memoId: MemoId): Promise<Result<AnalysisRecord>>;
   /** Records progress or failure without writing a result. */
   setAnalysisState(memoId: MemoId, state: AnalysisState): Promise<Result<void>>;
+  /**
+   * Stores the user's score and points its memo at it, in one transaction.
+   * Called on every edit gesture, so it must be idempotent for the same id.
+   */
+  saveScore(score: ScoreDocument): Promise<Result<void>>;
+  /** The score a memo currently points at, if the user has edited one. */
+  getScore(memoId: MemoId): Promise<Result<ScoreDocument>>;
+  /**
+   * Discards the user's edits entirely, so the display falls back to the
+   * machine transcription. This is the explicit re-seed path — it must never
+   * happen implicitly.
+   */
+  deleteScore(memoId: MemoId): Promise<Result<void>>;
   /**
    * Records progress on the take currently being captured. Best effort — a
    * failure here is swallowed, because losing the snapshot is survivable but
@@ -309,6 +323,83 @@ export class IdbMemoRepository implements MemoRepository {
     }
   }
 
+  async saveScore(score: ScoreDocument): Promise<Result<void>> {
+    try {
+      const db = await this.#db();
+      const tx = db.transaction(['scores', 'memos'], 'readwrite');
+      const memo = await tx.objectStore('memos').get(score.memoId);
+      if (!memo) {
+        await tx.done;
+        return failure('not-found', `No memo with id ${score.memoId}.`);
+      }
+
+      const updated: Memo = {
+        ...memo,
+        currentScoreId: score.id,
+        updatedAt: Date.now(),
+      };
+
+      await Promise.all([
+        tx.objectStore('scores').put(score),
+        tx.objectStore('memos').put(updated),
+        tx.done,
+      ]);
+      return ok(undefined);
+    } catch (e) {
+      return err(toStorageError(e, 'Could not save your edits.'));
+    }
+  }
+
+  async getScore(memoId: MemoId): Promise<Result<ScoreDocument>> {
+    try {
+      const db = await this.#db();
+      const memo = await db.get('memos', memoId);
+      const scoreId = memo?.currentScoreId;
+      if (!scoreId) {
+        return failure('not-found', `Memo ${memoId} has no edited score.`);
+      }
+      const score = await db.get('scores', scoreId);
+      if (!score) {
+        return failure('not-found', `Score ${scoreId} is missing.`);
+      }
+      return ok(score);
+    } catch (e) {
+      return err(toStorageError(e, 'Could not load your edits.'));
+    }
+  }
+
+  async deleteScore(memoId: MemoId): Promise<Result<void>> {
+    try {
+      const db = await this.#db();
+      const tx = db.transaction(['scores', 'memos'], 'readwrite');
+      const memo = await tx.objectStore('memos').get(memoId);
+      if (!memo) {
+        await tx.done;
+        return failure('not-found', `No memo with id ${memoId}.`);
+      }
+
+      // Every score row for the memo goes, not just the current pointer —
+      // orphans would be invisible dead weight.
+      const scoreKeys = await tx
+        .objectStore('scores')
+        .index('by-memoId')
+        .getAllKeys(memoId);
+
+      await Promise.all([
+        ...scoreKeys.map((key) => tx.objectStore('scores').delete(key)),
+        tx.objectStore('memos').put({
+          ...memo,
+          currentScoreId: null,
+          updatedAt: Date.now(),
+        }),
+        tx.done,
+      ]);
+      return ok(undefined);
+    } catch (e) {
+      return err(toStorageError(e, 'Could not discard your edits.'));
+    }
+  }
+
   async saveScratch(session: ScratchSession): Promise<void> {
     try {
       const db = await this.#db();
@@ -352,6 +443,7 @@ export class InMemoryMemoRepository implements MemoRepository {
   #memos = new Map<MemoId, Memo>();
   #audio = new Map<MemoId, AudioAsset>();
   #analyses = new Map<string, AnalysisRecord>();
+  #scores = new Map<MemoId, ScoreDocument>();
   #scratch: ScratchSession | null = null;
 
   async listMemos(): Promise<Result<Memo[]>> {
@@ -426,6 +518,33 @@ export class InMemoryMemoRepository implements MemoRepository {
     const memo = this.#memos.get(memoId);
     if (!memo) return failure('not-found', `No memo with id ${memoId}.`);
     this.#memos.set(memoId, { ...memo, analysisState: state });
+    return ok(undefined);
+  }
+
+  async saveScore(score: ScoreDocument): Promise<Result<void>> {
+    const memo = this.#memos.get(score.memoId);
+    if (!memo) return failure('not-found', `No memo with id ${score.memoId}.`);
+    this.#scores.set(score.memoId, score);
+    this.#memos.set(memo.id, {
+      ...memo,
+      currentScoreId: score.id,
+      updatedAt: Date.now(),
+    });
+    return ok(undefined);
+  }
+
+  async getScore(memoId: MemoId): Promise<Result<ScoreDocument>> {
+    const score = this.#scores.get(memoId);
+    return score
+      ? ok(score)
+      : failure('not-found', `Memo ${memoId} has no edited score.`);
+  }
+
+  async deleteScore(memoId: MemoId): Promise<Result<void>> {
+    const memo = this.#memos.get(memoId);
+    if (!memo) return failure('not-found', `No memo with id ${memoId}.`);
+    this.#scores.delete(memoId);
+    this.#memos.set(memoId, { ...memo, currentScoreId: null, updatedAt: Date.now() });
     return ok(undefined);
   }
 

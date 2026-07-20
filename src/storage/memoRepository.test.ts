@@ -163,6 +163,56 @@ describe('IdbMemoRepository', () => {
     expect(fetched.ok).toBe(true);
   });
 
+  it('round-trips the user score and keeps the memo pointing at it', async () => {
+    const { memo, audio } = await createMemoFromCapture(makeCaptured());
+    await repository.saveMemo(memo, audio);
+
+    const score = {
+      id: 'score-1',
+      memoId: memo.id,
+      createdAt: 1,
+      updatedAt: 2,
+      seededFromAnalysisId: null,
+      userEdited: true,
+      ppq: 480,
+      tempoBpm: 120,
+      notes: [
+        { id: 'n1', midi: 60, startMs: 0, durationMs: 300, centsDeviation: 0, confidence: 1 },
+      ],
+    };
+    expect((await repository.saveScore(score)).ok).toBe(true);
+
+    const fetched = await repository.getScore(memo.id);
+    expect(fetched.ok && fetched.value.notes[0]!.midi).toBe(60);
+
+    // The pointer is what makes the score discoverable next session.
+    const stored = await repository.getMemo(memo.id);
+    expect(stored.ok && stored.value.currentScoreId).toBe('score-1');
+  });
+
+  it('deleting the score clears the pointer so the transcription shows again', async () => {
+    const { memo, audio } = await createMemoFromCapture(makeCaptured());
+    await repository.saveMemo(memo, audio);
+    await repository.saveScore({
+      id: 'score-1',
+      memoId: memo.id,
+      createdAt: 1,
+      updatedAt: 2,
+      seededFromAnalysisId: null,
+      userEdited: true,
+      ppq: 480,
+      tempoBpm: 120,
+      notes: [],
+    });
+
+    expect((await repository.deleteScore(memo.id)).ok).toBe(true);
+
+    const gone = await repository.getScore(memo.id);
+    expect(gone.ok).toBe(false);
+    const stored = await repository.getMemo(memo.id);
+    expect(stored.ok && stored.value.currentScoreId).toBeNull();
+  });
+
   it('hands back an orphaned scratch session once, then forgets it', async () => {
     await repository.saveScratch({
       sessionId: 's1',
