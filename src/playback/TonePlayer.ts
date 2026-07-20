@@ -10,9 +10,13 @@ import type { QuantizedNote } from '../core/types.ts';
  * notes — equal-tempered, at concert pitch — so what you hear is exactly what
  * was written down, including its mistakes.
  *
- * A sine per note for now. Something with a little harmonic content would be
- * easier to pitch by ear, but that is a refinement, not a correctness matter.
+ * One oscillator per note, sawtooth rather than sine: the harmonics make the
+ * pitch far easier to place by ear when comparing against a recording, which
+ * is the whole purpose of playing this back.
  */
+
+/** Single source of truth for the waveform, so docs and tests cannot drift from it. */
+export const WAVEFORM: OscillatorType = 'sawtooth';
 
 /** Ramp lengths, in seconds. Without them each note starts and ends with an audible click. */
 const ATTACK_S = 0.008;
@@ -122,7 +126,7 @@ export class TonePlayer {
         noteStart + Math.max(note.durationMs / 1000, ATTACK_S + RELEASE_S);
 
       const oscillator = context.createOscillator();
-      oscillator.type = 'sawtooth';
+      oscillator.type = WAVEFORM;
       oscillator.frequency.value = midiToHz(note.midi);
 
       const gain = context.createGain();

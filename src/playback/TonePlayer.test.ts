@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuantizedNote } from '../core/types.ts';
-import { TonePlayer } from './TonePlayer.ts';
+import { TonePlayer, WAVEFORM } from './TonePlayer.ts';
 
 /**
  * jsdom has no Web Audio, so the graph is faked. What is worth asserting here
@@ -98,7 +98,10 @@ describe('TonePlayer', () => {
     expect(context.oscillators).toHaveLength(2);
     expect(context.oscillators[0]!.frequency.value).toBeCloseTo(440, 5);
     expect(context.oscillators[1]!.frequency.value).toBeCloseTo(523.25, 1);
-    expect(context.oscillators.every((o) => o.type === 'sine')).toBe(true);
+    // Asserted against the exported constant rather than a literal, so
+    // changing the waveform doesn't silently leave this test checking the old
+    // one.
+    expect(context.oscillators.every((o) => o.type === WAVEFORM)).toBe(true);
   });
 
   it('schedules notes at their transcribed offsets', async () => {

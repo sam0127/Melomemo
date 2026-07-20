@@ -90,7 +90,7 @@ Parameters worth turning when a real recording transcribes badly all live in
 for its value. **Bump `mpmEngine.version` after changing any of them** — that's
 what marks existing transcriptions stale so they can be recomputed.
 
-**Play notes** synthesises the transcription as sine tones, separately from the
+**Play notes** synthesises the transcription as tones, separately from the
 original recording — hearing the two back to back is the quickest way to judge
 whether a transcription is right. Only one of the two plays at a time.
 
@@ -122,6 +122,26 @@ mistake.
   out to be silent.
 - **Service worker updates prompt rather than auto-apply,** and the prompt is
   suppressed while recording.
+
+## Deployment
+
+Pushing to `master` builds and publishes to GitHub Pages via
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). Tests run first
+and a failure blocks the deploy.
+
+Live at **https://sam0127.github.io/Melomemo/**
+
+A project site is served from `/<repo>/`, not the domain root, so `vite.config.ts`
+sets `base` and derives the manifest's `start_url` and `scope` from it. Getting
+that wrong means an installed app launches to a 404 and the service worker
+never controls the page. Override with `BASE_PATH` to build for a custom domain:
+
+```
+BASE_PATH=/ npm run build
+```
+
+Because the deployed site is HTTPS, the microphone and PWA install both work
+there — which makes it the easiest way to try this on a phone.
 
 ## Testing on a phone
 

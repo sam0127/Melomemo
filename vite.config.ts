@@ -3,7 +3,16 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
+/*
+ * GitHub Pages serves a project site from /<repo>/, not from the domain root,
+ * so every asset URL, the service worker scope, and the manifest have to be
+ * built for that subpath. Overridable via BASE_PATH so the same config can
+ * build for a custom domain or a different host without edits.
+ */
+const base = process.env.BASE_PATH ?? '/Melomemo/';
+
 export default defineConfig({
+  base,
   plugins: [
     react(),
     VitePWA({
@@ -24,8 +33,10 @@ export default defineConfig({
         background_color: '#fbfaf8',
         display: 'standalone',
         orientation: 'portrait',
-        start_url: '/',
-        scope: '/',
+        // Must match the deployed subpath, or an installed app launches to a
+        // 404 and the service worker refuses to control the page.
+        start_url: base,
+        scope: base,
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
