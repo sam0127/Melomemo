@@ -1,4 +1,10 @@
-import type { AudioAsset, Memo, MemoId } from '../core/types.ts';
+import type {
+  AnalysisRecord,
+  AnalysisState,
+  AudioAsset,
+  Memo,
+  MemoId,
+} from '../core/types.ts';
 import { MEMO_SCHEMA_VERSION } from '../core/types.ts';
 import {
   appError,
@@ -34,6 +40,16 @@ export interface MemoRepository {
     patch: Partial<Pick<Memo, 'title' | 'tags'>>,
   ): Promise<Result<Memo>>;
   deleteMemo(id: MemoId): Promise<Result<void>>;
+  /**
+   * Stores an analysis and points its memo at it, in one transaction. A memo
+   * claiming an analysis id that does not exist would render as transcribed
+   * but show nothing.
+   */
+  saveAnalysis(record: AnalysisRecord): Promise<Result<void>>;
+  /** The analysis a memo currently points at, if any. */
+  getAnalysis(memoId: MemoId): Promise<Result<AnalysisRecord>>;
+  /** Records progress or failure without writing a result. */
+  setAnalysisState(memoId: MemoId, state: AnalysisState): Promise<Result<void>>;
   /**
    * Records progress on the take currently being captured. Best effort — a
    * failure here is swallowed, because losing the snapshot is survivable but
@@ -212,6 +228,87 @@ export class IdbMemoRepository implements MemoRepository {
     }
   }
 
+  async saveAnalysis(record: AnalysisRecord): Promise<Result<void>> {
+    try {
+      const db = await this.#db();
+      const tx = db.transaction(['analyses', 'memos'], 'readwrite');
+      const memo = await tx.objectStore('memos').get(record.memoId);
+      if (!memo) {
+        await tx.done;
+        return failure('not-found', `No memo with id ${record.memoId}.`);
+      }
+
+      // Rejecting a result computed from different bytes than the memo now
+      // holds. Should not happen — audio is immutable — but a mismatch would
+      // silently attach someone else's transcription.
+      if (memo.audioHash !== record.audioHash) {
+        await tx.done;
+        return failure(
+          'unknown',
+          'Analysis does not match the memo it claims to describe.',
+        );
+      }
+
+      const updated: Memo = {
+        ...memo,
+        analysisState: {
+          currentAnalysisId: record.id,
+          algorithmId: record.algorithmId,
+          algorithmVersion: record.algorithmVersion,
+          status: record.status === 'ok' ? 'ok' : 'failed',
+          updatedAt: Date.now(),
+        },
+      };
+
+      await Promise.all([
+        tx.objectStore('analyses').put(record),
+        tx.objectStore('memos').put(updated),
+        tx.done,
+      ]);
+      return ok(undefined);
+    } catch (e) {
+      return err(toStorageError(e, 'Could not save the transcription.'));
+    }
+  }
+
+  async getAnalysis(memoId: MemoId): Promise<Result<AnalysisRecord>> {
+    try {
+      const db = await this.#db();
+      const memo = await db.get('memos', memoId);
+      const analysisId = memo?.analysisState?.currentAnalysisId;
+      if (!analysisId) {
+        return failure('not-found', `Memo ${memoId} has no transcription.`);
+      }
+      const record = await db.get('analyses', analysisId);
+      if (!record) {
+        return failure('not-found', `Analysis ${analysisId} is missing.`);
+      }
+      return ok(record);
+    } catch (e) {
+      return err(toStorageError(e, 'Could not load the transcription.'));
+    }
+  }
+
+  async setAnalysisState(
+    memoId: MemoId,
+    state: AnalysisState,
+  ): Promise<Result<void>> {
+    try {
+      const db = await this.#db();
+      const tx = db.transaction('memos', 'readwrite');
+      const memo = await tx.store.get(memoId);
+      if (!memo) {
+        await tx.done;
+        return failure('not-found', `No memo with id ${memoId}.`);
+      }
+      await tx.store.put({ ...memo, analysisState: state });
+      await tx.done;
+      return ok(undefined);
+    } catch (e) {
+      return err(toStorageError(e, 'Could not update transcription status.'));
+    }
+  }
+
   async saveScratch(session: ScratchSession): Promise<void> {
     try {
       const db = await this.#db();
@@ -254,6 +351,7 @@ export class IdbMemoRepository implements MemoRepository {
 export class InMemoryMemoRepository implements MemoRepository {
   #memos = new Map<MemoId, Memo>();
   #audio = new Map<MemoId, AudioAsset>();
+  #analyses = new Map<string, AnalysisRecord>();
   #scratch: ScratchSession | null = null;
 
   async listMemos(): Promise<Result<Memo[]>> {
@@ -293,6 +391,41 @@ export class InMemoryMemoRepository implements MemoRepository {
   async deleteMemo(id: MemoId): Promise<Result<void>> {
     this.#memos.delete(id);
     this.#audio.delete(id);
+    return ok(undefined);
+  }
+
+  async saveAnalysis(record: AnalysisRecord): Promise<Result<void>> {
+    const memo = this.#memos.get(record.memoId);
+    if (!memo) return failure('not-found', `No memo with id ${record.memoId}.`);
+    this.#analyses.set(record.id, record);
+    this.#memos.set(memo.id, {
+      ...memo,
+      analysisState: {
+        currentAnalysisId: record.id,
+        algorithmId: record.algorithmId,
+        algorithmVersion: record.algorithmVersion,
+        status: record.status === 'ok' ? 'ok' : 'failed',
+        updatedAt: Date.now(),
+      },
+    });
+    return ok(undefined);
+  }
+
+  async getAnalysis(memoId: MemoId): Promise<Result<AnalysisRecord>> {
+    const analysisId = this.#memos.get(memoId)?.analysisState?.currentAnalysisId;
+    const record = analysisId ? this.#analyses.get(analysisId) : undefined;
+    return record
+      ? ok(record)
+      : failure('not-found', `Memo ${memoId} has no transcription.`);
+  }
+
+  async setAnalysisState(
+    memoId: MemoId,
+    state: AnalysisState,
+  ): Promise<Result<void>> {
+    const memo = this.#memos.get(memoId);
+    if (!memo) return failure('not-found', `No memo with id ${memoId}.`);
+    this.#memos.set(memoId, { ...memo, analysisState: state });
     return ok(undefined);
   }
 

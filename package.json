@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "idb": "^8.0.3",
+    "pitchy": "^4.1.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

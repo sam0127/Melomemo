@@ -5,22 +5,45 @@ import {
   formatTimestamp,
 } from '../../core/format.ts';
 import type { Memo } from '../../core/types.ts';
+import type { MemoRepository } from '../../storage/memoRepository.ts';
+import { TranscriptionPanel } from './TranscriptionPanel.tsx';
 
 interface MemoRowProps {
   memo: Memo;
   isCurrent: boolean;
   isPlaying: boolean;
+  isTranscribing: boolean;
+  repository: MemoRepository;
   onTogglePlay: (memo: Memo) => void;
+  onTranscribe: (memo: Memo) => void;
   onRename: (memo: Memo, title: string) => void;
   onExport: (memo: Memo) => void;
   onDelete: (memo: Memo) => void;
+}
+
+/** Short status shown on the row itself, so the list conveys progress at a glance. */
+function transcriptionSummary(memo: Memo, isTranscribing: boolean): string | null {
+  if (isTranscribing) return 'Transcribing…';
+  switch (memo.analysisState?.status) {
+    case 'ok':
+      return 'Transcribed';
+    case 'failed':
+      return 'Transcription failed';
+    case 'unsupported':
+      return 'Cannot transcribe';
+    default:
+      return null;
+  }
 }
 
 export function MemoRow({
   memo,
   isCurrent,
   isPlaying,
+  isTranscribing,
+  repository,
   onTogglePlay,
+  onTranscribe,
   onRename,
   onExport,
   onDelete,
@@ -28,6 +51,7 @@ export function MemoRow({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(memo.title);
+  const [showTranscription, setShowTranscription] = useState(false);
 
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,6 +71,16 @@ export function MemoRow({
   }, [editing]);
 
   const playLabel = isCurrent && isPlaying ? 'Pause' : 'Play';
+  const summary = transcriptionSummary(memo, isTranscribing);
+  const status = memo.analysisState?.status;
+  const hasTranscription = status === 'ok' || isTranscribing;
+  /*
+   * Imported memos, ones recorded before transcription existed, and ones whose
+   * analysis failed all need a way back in — otherwise a single failure leaves
+   * a memo permanently untranscribed.
+   */
+  const canTranscribe =
+    !isTranscribing && (memo.analysisState == null || status === 'failed');
   const trimmed = draft.trim();
   // An empty title would leave a row with nothing to identify or announce it.
   const canSave = trimmed.length > 0;
@@ -137,6 +171,12 @@ export function MemoRow({
           <span className="visually-hidden">
             {formatDurationSpoken(memo.capture.durationMs)}
           </span>
+          {summary && (
+            <>
+              {' · '}
+              <span className="memo-row__transcription-status">{summary}</span>
+            </>
+          )}
         </span>
       </div>
 
@@ -163,6 +203,27 @@ export function MemoRow({
         </div>
       ) : (
         <div className="memo-row__actions">
+          {canTranscribe && (
+            <button
+              type="button"
+              className="button"
+              aria-label={`Transcribe ${memo.title}`}
+              onClick={() => onTranscribe(memo)}
+            >
+              {status === 'failed' ? 'Retry' : 'Transcribe'}
+            </button>
+          )}
+          {hasTranscription && (
+            <button
+              type="button"
+              className="button"
+              aria-expanded={showTranscription}
+              aria-label={`${showTranscription ? 'Hide' : 'Show'} transcription for ${memo.title}`}
+              onClick={() => setShowTranscription((open) => !open)}
+            >
+              Notes
+            </button>
+          )}
           <button
             type="button"
             ref={renameButtonRef}
@@ -189,6 +250,15 @@ export function MemoRow({
             Delete
           </button>
         </div>
+      )}
+
+      {showTranscription && (
+        <TranscriptionPanel
+          memo={memo}
+          repository={repository}
+          isRunning={isTranscribing}
+          onRetranscribe={onTranscribe}
+        />
       )}
     </li>
   );

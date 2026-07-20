@@ -1,12 +1,16 @@
 import { useRef } from 'react';
 import type { Memo, MemoId } from '../../core/types.ts';
+import type { MemoRepository } from '../../storage/memoRepository.ts';
 import { MemoRow } from './MemoRow.tsx';
 
 interface MemoListProps {
   memos: Memo[];
   currentMemoId: MemoId | null;
   isPlaying: boolean;
+  repository: MemoRepository;
+  isTranscribing: (id: MemoId) => boolean;
   onTogglePlay: (memo: Memo) => void;
+  onTranscribe: (memo: Memo) => void;
   onRename: (memo: Memo, title: string) => void;
   onExport: (memo: Memo) => void;
   onDelete: (memo: Memo) => void;
@@ -16,7 +20,10 @@ export function MemoList({
   memos,
   currentMemoId,
   isPlaying,
+  repository,
+  isTranscribing,
   onTogglePlay,
+  onTranscribe,
   onRename,
   onExport,
   onDelete,
@@ -71,7 +78,10 @@ export function MemoList({
           memo={memo}
           isCurrent={memo.id === currentMemoId}
           isPlaying={isPlaying}
+          isTranscribing={isTranscribing(memo.id)}
+          repository={repository}
           onTogglePlay={onTogglePlay}
+          onTranscribe={onTranscribe}
           onRename={onRename}
           onExport={onExport}
           onDelete={handleDelete}

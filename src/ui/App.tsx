@@ -18,6 +18,7 @@ import { useAnnouncer } from './hooks/useAnnouncer.ts';
 import { useMemos } from './hooks/useMemos.ts';
 import { useRecorder } from './hooks/useRecorder.ts';
 import { useServiceWorkerUpdate } from './hooks/useServiceWorkerUpdate.ts';
+import { useTranscription } from './hooks/useTranscription.ts';
 
 export function App() {
   // Constructed once and shared for the app's lifetime. Neither owns React
@@ -61,16 +62,18 @@ export function App() {
     void probeStorageWritable().then(setStorageWritable);
   }, []);
 
+  const transcription = useTranscription(repository, memosApi.reload);
+
   const handleCaptured = useCallback(
     async (captured: CapturedAudio) => {
       const memo = await saveCaptured(captured);
-      if (memo) {
-        announce(
-          `Memo saved, ${formatDurationSpoken(memo.capture.durationMs)}.`,
-        );
-      }
+      if (!memo) return;
+      announce(`Memo saved, ${formatDurationSpoken(memo.capture.durationMs)}.`);
+      // Not awaited: the memo is already saved and listed, and transcription
+      // is a slower, less reliable stage that must not gate seeing it.
+      void transcription.transcribe(memo);
     },
-    [saveCaptured, announce],
+    [saveCaptured, announce, transcription],
   );
 
   const recorder = useRecorder({
@@ -117,6 +120,14 @@ export function App() {
       announce(`Deleted ${memo.title}.`);
     },
     [playback, remove, announce],
+  );
+
+  const handleTranscribe = useCallback(
+    async (memo: Memo) => {
+      announce(`Transcribing ${memo.title}.`);
+      await transcription.transcribe(memo);
+    },
+    [transcription, announce],
   );
 
   const handleRename = useCallback(
@@ -286,7 +297,10 @@ export function App() {
               memos={memos}
               currentMemoId={currentMemoId}
               isPlaying={isPlaying}
+              repository={repository}
+              isTranscribing={transcription.isRunning}
               onTogglePlay={handleTogglePlay}
+              onTranscribe={handleTranscribe}
               onRename={handleRename}
               onExport={handleExportOne}
               onDelete={handleDelete}

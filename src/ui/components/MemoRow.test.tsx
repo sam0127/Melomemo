@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { Memo } from '../../core/types.ts';
+import { InMemoryMemoRepository } from '../../storage/memoRepository.ts';
 import { MemoRow } from './MemoRow.tsx';
 
 function makeMemo(overrides: Partial<Memo> = {}): Memo {
@@ -40,7 +41,10 @@ function renderRow(props: Partial<Parameters<typeof MemoRow>[0]> = {}) {
         memo={memo}
         isCurrent={false}
         isPlaying={false}
+        isTranscribing={false}
+        repository={new InMemoryMemoRepository()}
         onTogglePlay={() => {}}
+        onTranscribe={() => {}}
         onRename={onRename}
         onExport={() => {}}
         onDelete={() => {}}

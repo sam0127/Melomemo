@@ -350,6 +350,113 @@ h2 {
   border-radius: var(--radius);
 }
 
+/* --- Transcription --- */
+
+.transcription {
+  /* Full row width, below the controls, since the row is a flex wrap. */
+  flex: 1 1 100%;
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.transcription__status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+}
+
+.transcription__warning {
+  margin: 0.5rem 0 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.transcription__notes {
+  margin: 0.5rem 0 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.transcription__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.transcription__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0.75rem 0 0;
+}
+
+.transcription__stats dt {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.transcription__stats dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.transcription__details {
+  /* Long note tables scroll inside themselves rather than widening the page. */
+  overflow-x: auto;
+}
+
+.transcription__table {
+  width: 100%;
+  margin-top: 0.75rem;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.transcription__table th,
+.transcription__table td {
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.piano-roll {
+  overflow-x: auto;
+  margin-top: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.piano-roll__svg {
+  display: block;
+}
+
+.piano-roll__row {
+  fill: transparent;
+}
+
+.piano-roll__row--accidental {
+  fill: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.piano-roll__contour {
+  stroke: color-mix(in srgb, var(--text) 40%, transparent);
+  stroke-width: 1.25;
+}
+
+.piano-roll__note {
+  fill: var(--accent);
+}
+
+.memo-row__transcription-status {
+  color: var(--text-muted);
+}
+
 /* --- Notices --- */
 
 .notice {

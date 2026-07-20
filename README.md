@@ -3,9 +3,10 @@
 Record a tune you're humming or whistling before you lose it. A local-first
 PWA — recordings never leave the device.
 
-**v1 (current):** record, save, browse, play back, export/import.
-**Next:** frequency analysis to transcribe the melody into equal temperament,
-then an editable MIDI track alongside the raw audio.
+**Current:** record, save, browse, play back, export/import, and automatic
+pitch transcription into equal temperament.
+**Next:** save the transcription as an editable MIDI track alongside the raw
+audio, then let it be edited.
 
 ## Setup
 
@@ -40,6 +41,7 @@ src/
   capture/    getUserMedia + MediaRecorder, format negotiation, interruptions.
   storage/    IndexedDB (the only place that imports `idb`), export/import.
   playback/   One shared <audio> element and one object URL.
+  analysis/   Decode, pitch tracking, note segmentation, the worker.
   ui/         React components and hooks.
 ```
 
@@ -67,6 +69,32 @@ re-seeding is an explicit, confirmed action.
 All five object stores (`memos`, `audio`, `analyses`, `scores`, `scratch`)
 exist at DB version 1 even though two stay empty until v2/v3, so adding those
 features needs no schema migration.
+
+### How transcription works
+
+Runs automatically after a recording is saved, but never blocks it: the memo is
+listed immediately and the transcription appears when it's ready.
+
+```
+stored audio
+  -> decode to mono 22.05 kHz          main thread — AudioContext doesn't exist in workers
+  -> McLeod Pitch Method per frame     46 ms window, 11.6 ms hop, in a worker
+  -> median smoothing                  kills isolated octave errors
+  -> hysteresis segmentation           so vibrato doesn't shred a held note
+  -> global tuning correction          so singing flat still reads as the right tune
+  -> notes + dense pitch contour
+```
+
+Parameters worth turning when a real recording transcribes badly all live in
+[`src/analysis/constants.ts`](src/analysis/constants.ts), each with the reason
+for its value. **Bump `mpmEngine.version` after changing any of them** — that's
+what marks existing transcriptions stale so they can be recomputed.
+
+Every memo's **Notes → Show details** panel gives the engine version, what
+fraction of frames were pitched, median confidence, the detected tuning offset,
+and per-note cents and confidence. The piano roll draws the raw pitch contour
+behind the notes, which is how you tell a wandering voice from a segmentation
+mistake.
 
 ### Decisions worth knowing before changing things
 
@@ -117,3 +145,13 @@ guards against don't reproduce there. Worth exercising specifically:
 - **Browser storage is evictable.** The app requests persistent storage after
   your first recording, but it's granted at the browser's discretion. Back up
   anything you care about.
+- **Transcription accuracy is unproven on real voices.** The pipeline is tested
+  against synthetic signals with known answers — steady tones across the sung
+  and whistled range, vibrato, glides, harmonics, noise, and deliberately flat
+  singing. No real singing has been through it. Expect to turn the constants.
+- **Note timings are in milliseconds, not rhythm.** Nothing is snapped to a
+  beat; that needs tempo estimation, which is deferred.
+- **Transcription assumes one note at a time**, which is what humming and
+  whistling are. Chords are out of scope.
+- **Backups don't include transcriptions.** They're derived data and are
+  recomputed on demand, so an imported memo shows a Transcribe button.
