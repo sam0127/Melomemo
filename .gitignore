@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+.vite
+
+# TypeScript incremental build state
+*.tsbuildinfo
+
+# Machine-local Claude Code settings
+.claude/settings.local.json
+
+# vite-plugin-pwa generated output
+dev-dist
+public/sw.js
+public/workbox-*.js

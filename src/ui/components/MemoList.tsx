@@ -1,0 +1,79 @@
+import { useRef } from 'react';
+import type { Memo, MemoId } from '../../core/types.ts';
+import { MemoRow } from './MemoRow.tsx';
+
+interface MemoListProps {
+  memos: Memo[];
+  currentMemoId: MemoId | null;
+  isPlaying: boolean;
+  onTogglePlay: (memo: Memo) => void;
+  onExport: (memo: Memo) => void;
+  onDelete: (memo: Memo) => void;
+}
+
+export function MemoList({
+  memos,
+  currentMemoId,
+  isPlaying,
+  onTogglePlay,
+  onExport,
+  onDelete,
+}: MemoListProps) {
+  const listRef = useRef<HTMLUListElement>(null);
+
+  /**
+   * Deleting removes the element that currently holds focus, which otherwise
+   * drops the user back to the top of the document. Focus is moved to the row
+   * that takes its place, or to the list itself when the last one goes.
+   */
+  const handleDelete = (memo: Memo) => {
+    const index = memos.findIndex((m) => m.id === memo.id);
+    const next = memos[index + 1] ?? memos[index - 1] ?? null;
+
+    onDelete(memo);
+
+    // Deferred a frame so the target exists after React removes the old row.
+    requestAnimationFrame(() => {
+      const list = listRef.current;
+      if (!list) return;
+      if (next) {
+        list
+          .querySelector<HTMLButtonElement>(`[data-memo-id="${next.id}"] button`)
+          ?.focus();
+      } else {
+        list.focus();
+      }
+    });
+  };
+
+  if (memos.length === 0) {
+    return (
+      <p className="empty-state">
+        No memos yet. Press <strong>New recording</strong> and sing or whistle
+        something.
+      </p>
+    );
+  }
+
+  return (
+    <ul
+      className="memo-list"
+      ref={listRef}
+      // Focusable only as a programmatic target for post-delete focus, never
+      // as a tab stop of its own.
+      tabIndex={-1}
+    >
+      {memos.map((memo) => (
+        <MemoRow
+          key={memo.id}
+          memo={memo}
+          isCurrent={memo.id === currentMemoId}
+          isPlaying={isPlaying}
+          onTogglePlay={onTogglePlay}
+          onExport={onExport}
+          onDelete={handleDelete}
+        />
+      ))}
+    </ul>
+  );
+}
