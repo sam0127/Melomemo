@@ -39,4 +39,9 @@ export interface NotePlaybackControls {
    * be paused at.
    */
   positionMs: (memo: Memo) => number;
+  /**
+   * Sounds a single pitch for auditioning a note while editing. Independent of
+   * the transport — it neither starts playback nor moves any playhead.
+   */
+  previewPitch: (midi: number) => void;
 }

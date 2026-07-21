@@ -53,6 +53,11 @@ interface PianoRollProps {
   getPositionMs?: (() => number) | undefined;
   editor?: RollEditor | undefined;
   scrubber?: RollScrubber | undefined;
+  /**
+   * Sounds a pitch so an edit can be heard as well as seen. Separate from
+   * RollEditor, which is only about mutations — this changes nothing.
+   */
+  onPreviewPitch?: ((midi: number) => void) | undefined;
 }
 
 /** Pointer movement below this is a click (select); above it, a drag begins. */
@@ -99,6 +104,11 @@ interface DragState {
   startDurationMs: number;
   /** Becomes true once the threshold is crossed; a click never sets it. */
   moved: boolean;
+  /**
+   * The pitch last auditioned during this gesture, so a drag sounds a note
+   * only when it actually crosses into a new row — not on every pointermove.
+   */
+  lastPreviewedMidi: number;
 }
 
 /** What the dragged note currently shows, before the edit is committed. */
@@ -145,6 +155,7 @@ export function PianoRoll({
   getPositionMs,
   editor,
   scrubber,
+  onPreviewPitch,
 }: PianoRollProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -333,8 +344,12 @@ export function PianoRoll({
       startMs: note.startMs,
       startDurationMs: note.durationMs,
       moved: false,
+      lastPreviewedMidi: note.midi,
     };
     setSelectedId(note.id);
+    // Hear the note you just grabbed, whether or not a drag follows — this is
+    // what makes a plain click on a note play it.
+    onPreviewPitch?.(note.midi);
   };
 
   const dragTarget = (event: React.PointerEvent): DragPreview | null => {
@@ -376,7 +391,17 @@ export function PianoRoll({
 
   const handleNotePointerMove = (event: React.PointerEvent<SVGRectElement>) => {
     const target = dragTarget(event);
-    if (target) setPreview(target);
+    if (!target) return;
+    setPreview(target);
+
+    // Audition on row crossings only. Firing per pointermove would retrigger
+    // the same pitch dozens of times across one row. Resizing is left silent —
+    // it does not change pitch.
+    const drag = dragRef.current;
+    if (drag && drag.mode === 'move' && target.midi !== drag.lastPreviewedMidi) {
+      drag.lastPreviewedMidi = target.midi;
+      onPreviewPitch?.(target.midi);
+    }
   };
 
   const handleNotePointerUp = (event: React.PointerEvent<SVGRectElement>) => {
@@ -425,13 +450,17 @@ export function PianoRoll({
     const nudge = event.shiftKey ? FINE_NUDGE_MS : NUDGE_MS;
     let midi = note.midi;
     let startMs = note.startMs;
+    // Only a pitch change is worth hearing; nudging in time is not.
+    let pitchChanged = false;
 
     switch (event.key) {
       case 'ArrowUp':
         midi = clampMidiToRange(midi + 1);
+        pitchChanged = midi !== note.midi;
         break;
       case 'ArrowDown':
         midi = clampMidiToRange(midi - 1);
+        pitchChanged = midi !== note.midi;
         break;
       case 'ArrowLeft':
         startMs = Math.max(0, startMs - nudge);
@@ -471,6 +500,7 @@ export function PianoRoll({
     // Arrow keys otherwise scroll the container out from under the edit.
     event.preventDefault();
     editor.onMove(note.id, midi, startMs);
+    if (pitchChanged) onPreviewPitch?.(midi);
     announce(`${midiToName(midi)}, ${formatSeconds(startMs)}`);
   };
 

@@ -201,6 +201,7 @@ export function TranscriptionPanel({
               onCreate: scoreApi.createNote,
               onDelete: scoreApi.deleteNote,
             }}
+            onPreviewPitch={notePlayback.previewPitch}
           />
         </>
       }

@@ -24,15 +24,17 @@ function renderRoll(notes: ScoreNote[] = NOTES) {
     onCreate: vi.fn(),
     onDelete: vi.fn(),
   };
+  const onPreviewPitch = vi.fn();
   const utils = render(
     <PianoRoll
       notes={notes}
       durationMs={DURATION_MS}
       transport="idle"
       editor={editor}
+      onPreviewPitch={onPreviewPitch}
     />,
   );
-  return { editor, ...utils };
+  return { editor, onPreviewPitch, ...utils };
 }
 
 function noteRect(name: RegExp): SVGRectElement {
@@ -180,6 +182,96 @@ describe('pointer editing', () => {
     const [midi, startMs] = vi.mocked(editor.onCreate).mock.calls[0]!;
     expect(midi).toBe(62);
     expect(startMs).toBeCloseTo(2000, 0);
+  });
+
+  describe('auditioning notes', () => {
+    it('sounds a note when it is clicked', () => {
+      const { onPreviewPitch } = renderRoll();
+      const rect = noteRect(/Note C4/);
+
+      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
+      fireEvent.pointerUp(rect, { pointerId: 1, clientX: 10, clientY: 50 });
+
+      expect(onPreviewPitch).toHaveBeenCalledTimes(1);
+      expect(onPreviewPitch).toHaveBeenCalledWith(60);
+    });
+
+    it('sounds each pitch a vertical drag passes through', () => {
+      const { onPreviewPitch } = renderRoll();
+      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      const rect = noteRect(/Note C4/);
+
+      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
+      // Up one row, then another.
+      fireEvent.pointerMove(rect, {
+        pointerId: 1,
+        clientX: 10,
+        clientY: 50 - geometry.rowHeight,
+      });
+      fireEvent.pointerMove(rect, {
+        pointerId: 1,
+        clientX: 10,
+        clientY: 50 - geometry.rowHeight * 2,
+      });
+
+      expect(vi.mocked(onPreviewPitch).mock.calls.map((c) => c[0])).toEqual([
+        60, 61, 62,
+      ]);
+    });
+
+    it('does not retrigger while the drag stays in one row', () => {
+      const { onPreviewPitch } = renderRoll();
+      const rect = noteRect(/Note C4/);
+
+      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
+      // Dragging sideways: same pitch throughout, so one sound only.
+      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 60, clientY: 50 });
+      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 110, clientY: 50 });
+      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 160, clientY: 50 });
+
+      expect(onPreviewPitch).toHaveBeenCalledTimes(1);
+    });
+
+    it('sounds the new pitch when moved with the arrow keys', async () => {
+      const user = userEvent.setup();
+      const { onPreviewPitch } = renderRoll();
+
+      noteRect(/Note C4/).focus();
+      await user.keyboard('{ArrowUp}');
+      expect(onPreviewPitch).toHaveBeenLastCalledWith(61);
+
+      await user.keyboard('{ArrowDown}');
+      expect(onPreviewPitch).toHaveBeenLastCalledWith(59);
+    });
+
+    it('stays silent when a note only moves in time', async () => {
+      const user = userEvent.setup();
+      const { onPreviewPitch } = renderRoll();
+
+      noteRect(/Note C4/).focus();
+      await user.keyboard('{ArrowRight}');
+      await user.keyboard('{ArrowLeft}');
+
+      // Nothing about the pitch changed, so there is nothing to hear.
+      expect(onPreviewPitch).not.toHaveBeenCalled();
+    });
+
+    it('stays silent while a note is resized', () => {
+      const { onPreviewPitch, container } = renderRoll();
+      const rect = noteRect(/Note C4/);
+      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
+      fireEvent.pointerUp(rect, { pointerId: 1, clientX: 10, clientY: 50 });
+      onPreviewPitch.mockClear();
+
+      const handle = container.querySelector('.piano-roll__handle')!;
+      fireEvent.pointerDown(handle, { button: 0, pointerId: 2, clientX: 100, clientY: 50 });
+      fireEvent.pointerMove(handle, { pointerId: 2, clientX: 160, clientY: 50 });
+      fireEvent.pointerUp(handle, { pointerId: 2, clientX: 160, clientY: 50 });
+
+      // Grabbing the grip sounds the note once; lengthening it does not
+      // retrigger, since the pitch never changes.
+      expect(onPreviewPitch).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('resizing', () => {

@@ -124,6 +124,10 @@ keyboard equivalent, because a drag-only editor is unusable without a pointer:
 | Delete | Select, then **Delete note** | `Delete` or `Backspace` |
 | Deselect | — | `Escape` |
 
+Clicking a note sounds it, and moving one vertically sounds each pitch it
+passes through, so an edit can be heard as well as seen. Auditioning is
+independent of the transport: it starts no playback and moves no playhead.
+
 Only the note's **end** resizes — dragging the start would shift the note in
 time, which is what moving is for. The resize grip appears on the selected note
 only; showing one on every note would blanket short notes in targets and make

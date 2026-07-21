@@ -33,6 +33,12 @@ const LEAD_S = 0.06;
 /** Per-note level. Low enough that several overlapping notes cannot clip. */
 const NOTE_GAIN = 0.22;
 
+/**
+ * How long an audition blip lasts. Long enough to hear the pitch, short enough
+ * that dragging across several rows does not turn into a drone.
+ */
+const PREVIEW_MS = 220;
+
 export type TransportStatus = 'idle' | 'playing' | 'paused';
 
 export interface TonePlayerState {
@@ -57,6 +63,11 @@ export class TonePlayer {
   #context: AudioContext | null = null;
   #master: GainNode | null = null;
   #voices: OscillatorNode[] = [];
+  /**
+   * Auditioned pitches, kept apart from #voices so the transport's own
+   * teardown never touches them and they never appear as playback.
+   */
+  #previewVoice: OscillatorNode | null = null;
   #endTimer: ReturnType<typeof setTimeout> | null = null;
   #listeners = new Set<TonePlayerListener>();
 
@@ -265,6 +276,57 @@ export class TonePlayer {
     else this.#emit(this.#status, this.#memoId);
   }
 
+  /**
+   * Sounds a single pitch, for auditioning a note while editing.
+   *
+   * Deliberately outside the transport: it emits no state, moves no playhead,
+   * and its voice is not among those a play/pause/stop tears down. Clicking a
+   * note to hear it must not look like starting playback.
+   *
+   * Monophonic — a new audition replaces the one before it, so dragging up a
+   * row at a time sounds like one note changing pitch rather than a pile-up.
+   */
+  async previewPitch(midi: number): Promise<void> {
+    const context = await this.#ensureContext();
+    if (!context || !this.#master) return;
+
+    this.#stopPreview();
+
+    const start = context.currentTime;
+    const end = start + PREVIEW_MS / 1000;
+
+    const oscillator = context.createOscillator();
+    oscillator.type = WAVEFORM;
+    oscillator.frequency.value = midiToHz(midi);
+
+    const gain = context.createGain();
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(NOTE_GAIN, start + ATTACK_S);
+    gain.gain.setValueAtTime(
+      NOTE_GAIN,
+      Math.max(end - RELEASE_S, start + ATTACK_S),
+    );
+    gain.gain.linearRampToValueAtTime(0, end);
+
+    oscillator.connect(gain);
+    gain.connect(this.#master);
+    oscillator.start(start);
+    oscillator.stop(end);
+    this.#previewVoice = oscillator;
+  }
+
+  #stopPreview(): void {
+    if (!this.#previewVoice) return;
+    try {
+      this.#previewVoice.onended = null;
+      this.#previewVoice.stop();
+      this.#previewVoice.disconnect();
+    } catch {
+      // Already finished on its own; nothing to release.
+    }
+    this.#previewVoice = null;
+  }
+
   /** Holds position so `resume` can continue from it. */
   pause(): void {
     if (this.#status !== 'playing') return;
@@ -312,6 +374,7 @@ export class TonePlayer {
 
   dispose(): void {
     this.#silence();
+    this.#stopPreview();
     this.#listeners.clear();
     void this.#context?.close().catch(() => {});
     this.#context = null;

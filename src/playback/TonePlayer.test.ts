@@ -285,6 +285,68 @@ describe('TonePlayer transport', () => {
     });
   });
 
+  describe('auditioning a pitch', () => {
+    it('sounds the requested pitch', async () => {
+      const player = new TonePlayer();
+      await player.previewPitch(69);
+
+      expect(context().oscillators).toHaveLength(1);
+      expect(context().oscillators[0]!.frequency.value).toBeCloseTo(440, 5);
+      expect(context().oscillators[0]!.type).toBe(WAVEFORM);
+    });
+
+    it('is monophonic, so dragging across rows does not pile up', async () => {
+      const player = new TonePlayer();
+      await player.previewPitch(60);
+      await player.previewPitch(62);
+      await player.previewPitch(64);
+
+      const [first, second, third] = context().oscillators;
+      // Each audition replaces the one before it; only the newest still rings.
+      expect(first!.stopped).not.toBeNull();
+      expect(second!.stopped).not.toBeNull();
+      expect(third!.stopped).toBeCloseTo(third!.started! + 0.22, 5);
+    });
+
+    it('leaves an idle transport idle', async () => {
+      const player = new TonePlayer();
+      await player.previewPitch(60);
+
+      // Clicking a note to hear it must not look like starting playback.
+      expect(player.status).toBe('idle');
+      expect(player.currentMemoId).toBeNull();
+      expect(player.positionMs).toBe(0);
+    });
+
+    it('does not interrupt playback in progress', async () => {
+      const player = new TonePlayer();
+      await player.play('memo-1', notes(60, 62, 64));
+      const transportVoices = [...context().oscillators];
+      // Scheduled at creation, each to its own note end. A teardown would
+      // instead call stop() with no argument, rewriting these to 0.
+      const scheduledStops = transportVoices.map((v) => v.stopped);
+
+      context().currentTime += 0.5;
+      await player.previewPitch(72);
+
+      expect(player.status).toBe('playing');
+      expect(player.currentMemoId).toBe('memo-1');
+      // The sequence's own voices are untouched — auditioning is not a
+      // transport operation.
+      expect(transportVoices.map((v) => v.stopped)).toEqual(scheduledStops);
+    });
+
+    it('does not move the playhead', async () => {
+      const player = new TonePlayer();
+      player.load('memo-1', notes(60, 62));
+      player.seek(400);
+      await player.previewPitch(72);
+
+      expect(player.positionMs).toBe(400);
+      expect(player.status).toBe('paused');
+    });
+  });
+
   it('does nothing for an empty transcription', async () => {
     const player = new TonePlayer();
     await player.play('memo-1', []);
