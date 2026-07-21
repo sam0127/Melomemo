@@ -572,6 +572,12 @@ h2 {
    */
   overscroll-behavior-x: contain;
   overscroll-behavior-y: auto;
+  /*
+   * Panning stays native, but pinch-zoom is withheld from the browser so a
+   * pinch here scales the chart instead of the whole app. The gesture itself
+   * is implemented in PianoRoll; this only stops the page reacting to it.
+   */
+  touch-action: pan-x pan-y;
 }
 
 /* Keyboard users need to be able to reach the scroll area itself. */

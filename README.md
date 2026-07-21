@@ -118,9 +118,11 @@ bottom, further scrolling carries on down the page.
 The roll opens framed around the transcribed notes, widened to fill the
 visible height. Dragging a note to the top or bottom row widens it further, a
 few semitones at a time, up to a hard **A1–C8** ceiling; notes outside that
-range are ignored rather than stretching the chart to reach them. Zoom (`−`
-/ `+`) trades range for detail, keeping the pitch labels pinned beside the
-chart at every level.
+range are ignored rather than stretching the chart to reach them. Zoom trades
+range for detail, keeping the pitch labels pinned beside the chart at every
+level — by the `−` / `+` buttons, by pinching the roll, or with ctrl+wheel and
+a trackpad pinch. Pinching the roll scales the chart rather than the page;
+everywhere else the app zooms normally.
 
 ### Editing notes
 

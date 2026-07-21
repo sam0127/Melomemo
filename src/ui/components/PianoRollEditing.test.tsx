@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { ScoreNote } from '../../core/types.ts';
@@ -396,6 +396,104 @@ describe('pointer editing', () => {
    * inert, and Chrome claimed every drag — vertical ones as pull-to-refresh,
    * horizontal ones as a pan.
    */
+  describe('pinch to zoom', () => {
+    /**
+     * jsdom has no TouchEvent, so the pieces the handler reads are supplied
+     * directly. `touches` is indexed and has a length, which is all the
+     * distance and midpoint maths needs.
+     */
+    function pinch(
+      target: Element,
+      type: string,
+      points: Array<{ x: number; y: number }>,
+    ): boolean {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'touches', {
+        value: points.map((p) => ({ clientX: p.x, clientY: p.y })),
+      });
+      // The zoom listener is attached natively, so its state updates are
+      // outside React's event system and need flushing before they are read.
+      act(() => {
+        target.dispatchEvent(event);
+      });
+      return event.defaultPrevented;
+    }
+
+    function rowHeightOf(container: HTMLElement): number {
+      return +container
+        .querySelector('.piano-roll__row, .piano-roll__row--accidental')!
+        .getAttribute('height')!;
+    }
+
+    it('scales the chart instead of letting the page zoom', () => {
+      const { container } = renderRoll();
+      const scroller = container.querySelector('.piano-roll__scroll')!;
+      const before = rowHeightOf(container);
+
+      // Two fingers, spreading apart.
+      expect(
+        pinch(scroller, 'touchstart', [
+          { x: 100, y: 100 },
+          { x: 140, y: 100 },
+        ]),
+      ).toBe(true);
+      pinch(scroller, 'touchmove', [
+        { x: 80, y: 100 },
+        { x: 200, y: 100 },
+      ]);
+
+      // Preventing the default is what stops the whole app zooming; the row
+      // height growing is the gesture actually being implemented.
+      expect(rowHeightOf(container)).toBeGreaterThan(before);
+    });
+
+    it('pinching inwards zooms out', () => {
+      const { container } = renderRoll();
+      const scroller = container.querySelector('.piano-roll__scroll')!;
+      const before = rowHeightOf(container);
+
+      pinch(scroller, 'touchstart', [
+        { x: 60, y: 100 },
+        { x: 260, y: 100 },
+      ]);
+      pinch(scroller, 'touchmove', [
+        { x: 150, y: 100 },
+        { x: 170, y: 100 },
+      ]);
+
+      expect(rowHeightOf(container)).toBeLessThan(before);
+    });
+
+    it('ignores a single finger, so scrolling still works', () => {
+      const { container } = renderRoll();
+      const scroller = container.querySelector('.piano-roll__scroll')!;
+      const before = rowHeightOf(container);
+
+      expect(pinch(scroller, 'touchstart', [{ x: 100, y: 100 }])).toBe(false);
+      pinch(scroller, 'touchmove', [{ x: 100, y: 160 }]);
+
+      expect(rowHeightOf(container)).toBe(before);
+    });
+
+    it('abandons an in-progress note drag when a second finger lands', () => {
+      const { editor, container } = renderRoll();
+      const scroller = container.querySelector('.piano-roll__scroll')!;
+      const rect = noteRect(/Note C4/);
+      const y = rowCentreY(60);
+
+      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: y });
+      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 60, clientY: y });
+      // The drag was never meant as one; it is a pinch.
+      pinch(scroller, 'touchstart', [
+        { x: 100, y: 100 },
+        { x: 140, y: 100 },
+      ]);
+      fireEvent.pointerUp(rect, { pointerId: 1, clientX: 60, clientY: y });
+
+      expect(editor.onMove).not.toHaveBeenCalled();
+    });
+  });
+
   describe('touch gestures', () => {
     function dispatchTouch(target: Element, type: string): boolean {
       const event = new Event(type, { bubbles: true, cancelable: true });

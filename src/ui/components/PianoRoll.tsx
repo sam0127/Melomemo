@@ -99,6 +99,12 @@ const EDGE_SCROLL_SPEED_PX = 14;
 
 const ZOOM_STEP = 1.35;
 
+/** Trackpad pinch arrives as a ctrl-modified wheel; this scales its delta. */
+const WHEEL_ZOOM_SENSITIVITY = 0.01;
+
+const clampRowHeight = (height: number): number =>
+  Math.max(MIN_ROW_HEIGHT, Math.min(MAX_ROW_HEIGHT, Math.round(height)));
+
 interface DragState {
   noteId: string;
   pointerId: number;
@@ -214,6 +220,13 @@ export function PianoRoll({
   }, [baseRange]);
 
   const geometry = createRollGeometry(notes, durationMs, { rowHeight, range });
+  // Read by the pinch and wheel handlers, which are attached once and must not
+  // be torn down and re-subscribed on every zoom step.
+  const geometryRef = useRef(geometry);
+  geometryRef.current = geometry;
+  const rowHeightRef = useRef(rowHeight);
+  rowHeightRef.current = rowHeight;
+
   const { width, height, lowestMidi, highestMidi } = geometry;
   const semitoneSpan = highestMidi - lowestMidi + 1;
   const scrollerHeight = Math.min(height, viewportHeight);
@@ -356,12 +369,17 @@ export function PianoRoll({
     ].join(', ');
 
     const onTouchStart = (event: TouchEvent) => {
+      // A second finger is a pinch, which the zoom handler owns — claiming it
+      // here would swallow the gesture before it could be recognised. Optional
+      // because a synthetic event need not carry a touch list at all.
+      if ((event.touches?.length ?? 1) > 1) return;
       const target = event.target as Element | null;
       // Cancelling at touchstart is what stops the browser claiming the
       // gesture; by touchmove the decision is already made.
       if (target?.closest?.(draggable)) event.preventDefault();
     };
     const onTouchMove = (event: TouchEvent) => {
+      if ((event.touches?.length ?? 1) > 1) return;
       if (dragRef.current || scrubRef.current) event.preventDefault();
     };
 
@@ -372,6 +390,106 @@ export function PianoRoll({
       svg.removeEventListener('touchmove', onTouchMove);
     };
   }, [editor, scrubber]);
+
+  /*
+   * Pinch-to-zoom, taken over from the browser.
+   *
+   * `touch-action: pan-x pan-y` on the scroller keeps native scrolling but
+   * withholds pinch-zoom, so the page no longer zooms when the gesture starts
+   * here. That only stops the browser doing something; the gesture still has
+   * to be implemented, which is what this does — along with the trackpad
+   * equivalent, a ctrl-modified wheel.
+   *
+   * Both listeners are non-passive because both call preventDefault, and both
+   * are attached natively since React's synthetic touch and wheel handlers are
+   * passive and cannot.
+   */
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+
+    let startDistance = 0;
+    let startRowHeight = 0;
+    let anchorMidi = 0;
+
+    const spread = (touches: TouchList) =>
+      Math.hypot(
+        touches[0]!.clientX - touches[1]!.clientX,
+        touches[0]!.clientY - touches[1]!.clientY,
+      );
+
+    /** The pitch under the middle of the gesture, held still as it scales. */
+    const midiBetween = (touches: TouchList) => {
+      const rect = scroller.getBoundingClientRect();
+      const midY = (touches[0]!.clientY + touches[1]!.clientY) / 2;
+      return geometryRef.current.midiForY(midY - rect.top + scroller.scrollTop);
+    };
+
+    const applyZoom = (nextHeight: number, midi: number) => {
+      const clamped = clampRowHeight(nextHeight);
+      if (clamped === rowHeightRef.current) return;
+      pendingCenterMidi.current = midi;
+      setRowHeight(clamped);
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      // Optional throughout: a synthetic touch event need not carry a list,
+      // and an exception here would abort the handler silently.
+      if (event.touches?.length !== 2) return;
+      event.preventDefault();
+      // A second finger means the drag was never meant as one.
+      const drag = dragRef.current;
+      if (drag) {
+        cancelAnimationFrame(drag.raf);
+        dragRef.current = null;
+        setPreview(null);
+      }
+      startDistance = spread(event.touches);
+      startRowHeight = rowHeightRef.current;
+      anchorMidi = midiBetween(event.touches);
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches?.length !== 2 || startDistance === 0) return;
+      event.preventDefault();
+      applyZoom(
+        startRowHeight * (spread(event.touches) / startDistance),
+        anchorMidi,
+      );
+    };
+
+    const onTouchEnd = (event: TouchEvent) => {
+      if ((event.touches?.length ?? 0) < 2) startDistance = 0;
+    };
+
+    const onWheel = (event: WheelEvent) => {
+      // Set by the platform for a trackpad pinch, and for ctrl+wheel, which
+      // both mean "zoom" rather than "scroll".
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      const rect = scroller.getBoundingClientRect();
+      const midi = geometryRef.current.midiForY(
+        event.clientY - rect.top + scroller.scrollTop,
+      );
+      applyZoom(
+        rowHeightRef.current * (1 - event.deltaY * WHEEL_ZOOM_SENSITIVITY),
+        midi,
+      );
+    };
+
+    scroller.addEventListener('touchstart', onTouchStart, { passive: false });
+    scroller.addEventListener('touchmove', onTouchMove, { passive: false });
+    scroller.addEventListener('touchend', onTouchEnd);
+    scroller.addEventListener('touchcancel', onTouchEnd);
+    scroller.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      scroller.removeEventListener('touchstart', onTouchStart);
+      scroller.removeEventListener('touchmove', onTouchMove);
+      scroller.removeEventListener('touchend', onTouchEnd);
+      scroller.removeEventListener('touchcancel', onTouchEnd);
+      scroller.removeEventListener('wheel', onWheel);
+    };
+  }, []);
 
   const announce = (message: string) => {
     // A live region only fires on change; identical successive messages need
