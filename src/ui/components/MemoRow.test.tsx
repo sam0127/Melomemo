@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -32,13 +33,62 @@ function makeMemo(overrides: Partial<Memo> = {}): Memo {
   };
 }
 
+/**
+ * Which memo is open is owned by the list, so the row is a controlled
+ * component. This wrapper supplies that state the way the list does.
+ */
+function OpenableRow(props: Partial<Parameters<typeof MemoRow>[0]>) {
+  const [open, setOpen] = useState(false);
+  return (
+    <ul>
+      <MemoRow
+        {...(props as Parameters<typeof MemoRow>[0])}
+        isOpen={open}
+        onToggleOpen={setOpen}
+      />
+    </ul>
+  );
+}
+
 function renderRow(props: Partial<Parameters<typeof MemoRow>[0]> = {}) {
   const onRename = vi.fn();
   const memo = makeMemo();
   const utils = render(
+    <OpenableRow
+      memo={memo}
+      isCurrent={false}
+      isPlaying={false}
+      isTranscribing={false}
+      repository={new InMemoryMemoRepository()}
+      notePlayback={{
+        statusFor: () => 'idle',
+        toggle: () => {},
+        stop: () => {},
+        beginScrub: () => {},
+        endScrub: () => {},
+        positionMs: () => 0,
+        previewPitch: () => {},
+        syncNotes: () => {},
+      }}
+      onTogglePlay={() => {}}
+      onTranscribe={() => {}}
+      onRename={onRename}
+      onExport={() => {}}
+      onDelete={() => {}}
+      {...props}
+    />,
+  );
+  return { onRename, memo, ...utils };
+}
+
+/** Renders with the open state supplied from outside, as the list does. */
+function renderRowControlled(
+  props: Pick<Parameters<typeof MemoRow>[0], 'isOpen' | 'onToggleOpen'>,
+) {
+  return render(
     <ul>
       <MemoRow
-        memo={memo}
+        memo={makeMemo()}
         isCurrent={false}
         isPlaying={false}
         isTranscribing={false}
@@ -55,14 +105,13 @@ function renderRow(props: Partial<Parameters<typeof MemoRow>[0]> = {}) {
         }}
         onTogglePlay={() => {}}
         onTranscribe={() => {}}
-        onRename={onRename}
+        onRename={() => {}}
         onExport={() => {}}
         onDelete={() => {}}
         {...props}
       />
     </ul>,
   );
-  return { onRename, memo, ...utils };
 }
 
 describe('opening a memo', () => {
@@ -80,6 +129,24 @@ describe('opening a memo', () => {
     const row = container.querySelector('.memo-row')!;
 
     await user.click(row);
+    expect(screen.getByRole('button', { name: 'Chorus idea' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('reports opening and closing to its owner rather than deciding alone', async () => {
+    // The list owns which memo is open, so that opening one closes the rest.
+    const user = userEvent.setup();
+    const onToggleOpen = vi.fn();
+    renderRowControlled({ isOpen: false, onToggleOpen });
+
+    await user.click(screen.getByRole('button', { name: 'Chorus idea' }));
+    expect(onToggleOpen).toHaveBeenCalledWith(true);
+  });
+
+  it('shows its transcription only when the owner says it is open', () => {
+    renderRowControlled({ isOpen: true, onToggleOpen: () => {} });
     expect(screen.getByRole('button', { name: 'Chorus idea' })).toHaveAttribute(
       'aria-expanded',
       'true',

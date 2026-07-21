@@ -14,6 +14,8 @@ interface MemoRowProps {
   isCurrent: boolean;
   isPlaying: boolean;
   isTranscribing: boolean;
+  isOpen: boolean;
+  onToggleOpen: (open: boolean) => void;
   repository: MemoRepository;
   notePlayback: NotePlaybackControls;
   onTogglePlay: (memo: Memo) => void;
@@ -43,6 +45,8 @@ export function MemoRow({
   isCurrent,
   isPlaying,
   isTranscribing,
+  isOpen,
+  onToggleOpen,
   repository,
   notePlayback,
   onTogglePlay,
@@ -54,7 +58,10 @@ export function MemoRow({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(memo.title);
-  const [showTranscription, setShowTranscription] = useState(false);
+  // Which memo is open is owned by the list, so opening one closes the rest.
+  const showTranscription = isOpen;
+  const setShowTranscription = (next: boolean | ((open: boolean) => boolean)) =>
+    onToggleOpen(typeof next === 'function' ? next(isOpen) : next);
 
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);

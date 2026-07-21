@@ -110,6 +110,18 @@ The piano roll's coordinate maths lives in
 (time→x, pitch→y) and inverse mappings, so rendering, hit-testing, and dragging
 all resolve through the same arithmetic.
 
+Only one memo is open at a time, and an open roll is capped to a fraction of
+the window so the whole memo still fits a screen — the chart scrolls inside
+that rather than growing the page. Once it is scrolled to its own top or
+bottom, further scrolling carries on down the page.
+
+The roll opens framed around the transcribed notes, widened to fill the
+visible height. Dragging a note to the top or bottom row widens it further, a
+few semitones at a time, up to a hard **A1–C8** ceiling; notes outside that
+range are ignored rather than stretching the chart to reach them. Zoom (`−`
+/ `+`) trades range for detail, keeping the pitch labels pinned beside the
+chart at every level.
+
 ### Editing notes
 
 Notes on the roll can be moved, added, and deleted. Every gesture has a

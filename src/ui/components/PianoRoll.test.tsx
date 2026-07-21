@@ -1,7 +1,12 @@
 import { fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuantizedNote } from '../../core/types.ts';
-import { createRollGeometry } from '../pianoRollGeometry.ts';
+import {
+  DEFAULT_ROW_HEIGHT,
+  createRollGeometry,
+  defaultPitchRange,
+  rollViewportHeight,
+} from '../pianoRollGeometry.ts';
 import { PianoRoll } from './PianoRoll.tsx';
 
 /**
@@ -15,6 +20,21 @@ const NOTES: QuantizedNote[] = [
   { midi: 64, startMs: 8000, durationMs: 1000, centsDeviation: 0, confidence: 0.9 },
 ];
 const DURATION_MS = 10_000;
+
+/**
+ * The geometry the component builds for these props, so assertions are made
+ * against the same arithmetic the renderer draws with rather than a guess.
+ */
+function buildGeometry() {
+  return createRollGeometry(NOTES, DURATION_MS, {
+    rowHeight: DEFAULT_ROW_HEIGHT,
+    range: defaultPitchRange(
+      NOTES,
+      DEFAULT_ROW_HEIGHT,
+      rollViewportHeight(window.innerHeight),
+    ),
+  });
+}
 
 describe('PianoRoll playhead', () => {
   let rafCallbacks: FrameRequestCallback[];
@@ -66,7 +86,7 @@ describe('PianoRoll playhead', () => {
         getPositionMs={() => 4000}
       />,
     );
-    const geometry = createRollGeometry(NOTES, DURATION_MS);
+    const geometry = buildGeometry();
     expect(playhead(container).style.display).not.toBe('none');
     expect(playhead(container).getAttribute('transform')).toBe(
       `translate(${geometry.xForMs(4000).toFixed(2)} 0)`,
@@ -99,7 +119,7 @@ describe('PianoRoll playhead', () => {
       />,
     );
 
-    const geometry = createRollGeometry(NOTES, DURATION_MS);
+    const geometry = buildGeometry();
 
     position = 5000;
     fireFrame();
@@ -151,7 +171,7 @@ describe('PianoRoll playhead', () => {
       // content x — the playhead goes to wherever the pointer is dragged.
       const { scrubber, container } = renderScrubbable(2000);
       const grab = container.querySelector('.piano-roll__playhead-grab')!;
-      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      const geometry = buildGeometry();
       const target = geometry.xForMs(5000);
 
       fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: geometry.xForMs(2000), clientY: 10 });
@@ -173,7 +193,7 @@ describe('PianoRoll playhead', () => {
     it('moves the playhead to where the pointer is, not by how far it dragged', () => {
       const { container } = renderScrubbable(0);
       const grab = container.querySelector('.piano-roll__playhead-grab')!;
-      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      const geometry = buildGeometry();
       const target = geometry.xForMs(2500);
 
       fireEvent.pointerDown(grab, { button: 0, pointerId: 1, clientX: 0, clientY: 10 });
@@ -264,7 +284,7 @@ describe('PianoRoll playhead', () => {
     // jsdom reports zero layout; give the scroller a real viewport width.
     Object.defineProperty(scroller, 'clientWidth', { value: 500 });
 
-    const geometry = createRollGeometry(NOTES, DURATION_MS);
+    const geometry = buildGeometry();
 
     // Playhead well inside the window: the user's scroll must not be touched.
     position = 1000; // x ≈ 110

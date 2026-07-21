@@ -2,7 +2,12 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { ScoreNote } from '../../core/types.ts';
-import { createRollGeometry } from '../pianoRollGeometry.ts';
+import {
+  DEFAULT_ROW_HEIGHT,
+  createRollGeometry,
+  defaultPitchRange,
+  rollViewportHeight,
+} from '../pianoRollGeometry.ts';
 import { PianoRoll, type RollEditor } from './PianoRoll.tsx';
 
 /**
@@ -16,6 +21,31 @@ const NOTES: ScoreNote[] = [
   { id: 'b', midi: 64, startMs: 1000, durationMs: 500, centsDeviation: 0, confidence: 0.9 },
 ];
 const DURATION_MS = 4000;
+
+/** The geometry the component builds for these props. */
+function buildGeometry(notes: ScoreNote[] = NOTES) {
+  return createRollGeometry(notes, DURATION_MS, {
+    rowHeight: DEFAULT_ROW_HEIGHT,
+    range: defaultPitchRange(
+      notes,
+      DEFAULT_ROW_HEIGHT,
+      rollViewportHeight(window.innerHeight),
+    ),
+  });
+}
+
+/**
+ * The vertical centre of a note's row, in client coordinates.
+ *
+ * Pitch is read absolutely from the row under the pointer — that is what lets
+ * a vertical auto-scroll carry a dragged note — so a drag has to start at the
+ * note's actual row rather than an arbitrary y. jsdom reports a zero rect, so
+ * content coordinates are client coordinates here.
+ */
+function rowCentreY(midi: number): number {
+  const geometry = buildGeometry();
+  return geometry.yForMidi(midi) + geometry.rowHeight / 2;
+}
 
 function renderRoll(notes: ScoreNote[] = NOTES) {
   const editor: RollEditor = {
@@ -96,16 +126,18 @@ describe('keyboard editing', () => {
 describe('pointer editing', () => {
   it('commits a drag as one move, through the same geometry the renderer uses', () => {
     const { editor } = renderRoll();
-    const geometry = createRollGeometry(NOTES, DURATION_MS);
+    const geometry = buildGeometry();
     const rect = noteRect(/Note C4/);
 
-    // Two rows up, and right by the width of 500ms.
+    // Two rows up, and right by the width of 500ms. Started at the note's own
+    // row, since pitch is read from the row under the pointer.
     const dx = geometry.widthForMs(500);
+    const y = rowCentreY(60);
     const dy = -2 * geometry.rowHeight;
 
-    fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
-    fireEvent.pointerMove(rect, { pointerId: 1, clientX: 10 + dx, clientY: 50 + dy });
-    fireEvent.pointerUp(rect, { pointerId: 1, clientX: 10 + dx, clientY: 50 + dy });
+    fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: y });
+    fireEvent.pointerMove(rect, { pointerId: 1, clientX: 10 + dx, clientY: y + dy });
+    fireEvent.pointerUp(rect, { pointerId: 1, clientX: 10 + dx, clientY: y + dy });
 
     expect(editor.onMove).toHaveBeenCalledTimes(1);
     const [id, midi, startMs] = vi.mocked(editor.onMove).mock.calls[0]!;
@@ -149,7 +181,7 @@ describe('pointer editing', () => {
      * pointer leaves the note — losing it must not lose the drag.
      */
     const { editor } = renderRoll();
-    const geometry = createRollGeometry(NOTES, DURATION_MS);
+    const geometry = buildGeometry();
     const rect = noteRect(/Note C4/);
     Object.defineProperty(rect, 'setPointerCapture', {
       value: () => {
@@ -171,7 +203,7 @@ describe('pointer editing', () => {
     // Not querySelector('svg'): the pitch-label gutter is an svg too, and it
     // comes first in the DOM.
     const svg = container.querySelector('.piano-roll__svg')!;
-    const geometry = createRollGeometry(NOTES, DURATION_MS);
+    const geometry = buildGeometry();
 
     // jsdom reports a zero rect, so client coords are svg coords directly.
     const x = geometry.xForMs(2000);
@@ -198,20 +230,21 @@ describe('pointer editing', () => {
 
     it('sounds each pitch a vertical drag passes through', () => {
       const { onPreviewPitch } = renderRoll();
-      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      const geometry = buildGeometry();
       const rect = noteRect(/Note C4/);
 
-      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
+      const y = rowCentreY(60);
+      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: y });
       // Up one row, then another.
       fireEvent.pointerMove(rect, {
         pointerId: 1,
         clientX: 10,
-        clientY: 50 - geometry.rowHeight,
+        clientY: y - geometry.rowHeight,
       });
       fireEvent.pointerMove(rect, {
         pointerId: 1,
         clientX: 10,
-        clientY: 50 - geometry.rowHeight * 2,
+        clientY: y - geometry.rowHeight * 2,
       });
 
       expect(vi.mocked(onPreviewPitch).mock.calls.map((c) => c[0])).toEqual([
@@ -223,11 +256,12 @@ describe('pointer editing', () => {
       const { onPreviewPitch } = renderRoll();
       const rect = noteRect(/Note C4/);
 
-      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: 50 });
-      // Dragging sideways: same pitch throughout, so one sound only.
-      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 60, clientY: 50 });
-      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 110, clientY: 50 });
-      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 160, clientY: 50 });
+      // Held on the note's own row throughout: same pitch, so one sound only.
+      const y = rowCentreY(60);
+      fireEvent.pointerDown(rect, { button: 0, pointerId: 1, clientX: 10, clientY: y });
+      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 60, clientY: y });
+      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 110, clientY: y });
+      fireEvent.pointerMove(rect, { pointerId: 1, clientX: 160, clientY: y });
 
       expect(onPreviewPitch).toHaveBeenCalledTimes(1);
     });
@@ -294,7 +328,7 @@ describe('pointer editing', () => {
 
     it('lengthens the note when its end is dragged right', () => {
       const { editor, container } = renderRoll();
-      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      const geometry = buildGeometry();
       selectNote(/Note C4/);
 
       const handle = container.querySelector('.piano-roll__handle')!;
@@ -313,7 +347,7 @@ describe('pointer editing', () => {
 
     it('shortens when dragged left, and never past the floor', () => {
       const { editor, container } = renderRoll();
-      const geometry = createRollGeometry(NOTES, DURATION_MS);
+      const geometry = buildGeometry();
       selectNote(/Note C4/);
 
       const handle = container.querySelector('.piano-roll__handle')!;

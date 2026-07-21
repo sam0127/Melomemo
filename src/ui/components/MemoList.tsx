@@ -10,6 +10,9 @@ interface MemoListProps {
   isPlaying: boolean;
   repository: MemoRepository;
   isTranscribing: (id: MemoId) => boolean;
+  /** Only one memo is open at a time, so this lives above the rows. */
+  openMemoId: MemoId | null;
+  onToggleOpen: (id: MemoId, open: boolean) => void;
   notePlayback: NotePlaybackControls;
   onTogglePlay: (memo: Memo) => void;
   onTranscribe: (memo: Memo) => void;
@@ -23,6 +26,8 @@ export function MemoList({
   currentMemoId,
   isPlaying,
   repository,
+  openMemoId,
+  onToggleOpen,
   isTranscribing,
   notePlayback,
   onTogglePlay,
@@ -82,6 +87,8 @@ export function MemoList({
           isCurrent={memo.id === currentMemoId}
           isPlaying={isPlaying}
           isTranscribing={isTranscribing(memo.id)}
+          isOpen={openMemoId === memo.id}
+          onToggleOpen={(open) => onToggleOpen(memo.id, open)}
           repository={repository}
           notePlayback={notePlayback}
           onTogglePlay={onTogglePlay}

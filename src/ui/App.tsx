@@ -44,6 +44,8 @@ export function App() {
     status: 'idle',
     memoId: null,
   });
+  /** Only one memo shows its transcription at a time. */
+  const [openMemoId, setOpenMemoId] = useState<string | null>(null);
 
   const memosApi = useMemos(repository);
   const { memos, loading, saveCaptured, remove, rename } = memosApi;
@@ -387,6 +389,8 @@ export function App() {
               isPlaying={isPlaying}
               repository={repository}
               isTranscribing={transcription.isRunning}
+              openMemoId={openMemoId}
+              onToggleOpen={(id, open) => setOpenMemoId(open ? id : null)}
               notePlayback={notePlayback}
               onTogglePlay={handleTogglePlay}
               onTranscribe={handleTranscribe}
