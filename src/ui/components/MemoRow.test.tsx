@@ -50,6 +50,8 @@ function renderRow(props: Partial<Parameters<typeof MemoRow>[0]> = {}) {
           beginScrub: () => {},
           endScrub: () => {},
           positionMs: () => 0,
+          previewPitch: () => {},
+          syncNotes: () => {},
         }}
         onTogglePlay={() => {}}
         onTranscribe={() => {}}

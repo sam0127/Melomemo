@@ -44,4 +44,10 @@ export interface NotePlaybackControls {
    * the transport — it neither starts playback nor moves any playhead.
    */
   previewPitch: (midi: number) => void;
+  /**
+   * Keeps the transport's copy of a memo's notes in step with edits, so a note
+   * moved while paused plays where it was moved to rather than where it was.
+   * A no-op for any memo the transport is not holding.
+   */
+  syncNotes: (memo: Memo, notes: readonly QuantizedNote[]) => void;
 }

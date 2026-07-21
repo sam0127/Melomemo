@@ -167,7 +167,9 @@ export function App() {
         // The recording and its transcription played at once are just noise,
         // and on iOS two sources competing for the audio session goes badly.
         playback.pause();
-        void tonePlayer.play(memo.id, [...notes]);
+        // Not copied: the transport keeps this exact array, so syncNotes can
+        // tell a real edit from a re-render by identity alone.
+        void tonePlayer.play(memo.id, notes);
       },
 
       stop: () => tonePlayer.stop(),
@@ -175,7 +177,7 @@ export function App() {
       beginScrub: (memo, notes) => {
         if (tonePlayer.currentMemoId !== memo.id) {
           // Scrubbing a different memo's playhead takes the transport over.
-          tonePlayer.load(memo.id, [...notes]);
+          tonePlayer.load(memo.id, notes);
           scrubResumeRef.current = false;
           return;
         }
@@ -186,7 +188,7 @@ export function App() {
 
       endScrub: (memo, notes, ms) => {
         if (tonePlayer.currentMemoId !== memo.id) {
-          tonePlayer.load(memo.id, [...notes]);
+          tonePlayer.load(memo.id, notes);
         }
         tonePlayer.seek(ms);
         if (scrubResumeRef.current) {
@@ -202,6 +204,8 @@ export function App() {
         tonePlayer.currentMemoId === memo.id ? tonePlayer.positionMs : 0,
 
       previewPitch: (midi) => void tonePlayer.previewPitch(midi),
+
+      syncNotes: (memo, notes) => tonePlayer.updateNotes(memo.id, notes),
     }),
     [noteTransport, playback, tonePlayer],
   );

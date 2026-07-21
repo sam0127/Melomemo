@@ -62,6 +62,16 @@ export function TranscriptionPanel({
     [notePlayback, memo],
   );
 
+  // Hand every edit to the transport, which schedules its voices up front and
+  // would otherwise keep replaying the notes as they were when play started.
+  // A no-op unless this memo is the one loaded, and unless the notes actually
+  // changed — the array identity is the signal.
+  const { syncNotes } = notePlayback;
+  const scoreNotes = scoreApi.notes;
+  useEffect(() => {
+    syncNotes(memo, scoreNotes);
+  }, [syncNotes, memo, scoreNotes]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);

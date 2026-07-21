@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuantizedNote } from '../core/types.ts';
+import { midiToHz } from '../core/pitch.ts';
 import { TonePlayer, WAVEFORM } from './TonePlayer.ts';
 
 /**
@@ -282,6 +283,104 @@ describe('TonePlayer transport', () => {
       player.seek(500);
       expect(player.status).toBe('idle');
       expect(player.currentMemoId).toBeNull();
+    });
+  });
+
+  describe('editing while the transport holds the notes', () => {
+    it('resumes with a note edited during the pause, not the old one', async () => {
+      // The reported bug: voices are scheduled up front, so a note moved while
+      // paused replayed at its old pitch when the playhead reached it.
+      const player = new TonePlayer();
+      const original = notes(60, 62, 64);
+      await player.play('memo-1', original);
+
+      context().currentTime += 0.06 + 0.2;
+      player.pause();
+
+      const edited = original.map((note, i) =>
+        i === 2 ? { ...note, midi: 72 } : note,
+      );
+      player.updateNotes('memo-1', edited);
+
+      const before = context().oscillators.length;
+      await player.resume();
+      const rescheduled = context().oscillators.slice(before);
+
+      // The third note now sounds at its new pitch.
+      const pitches = rescheduled.map((o) => Math.round(o.frequency.value));
+      expect(pitches).toContain(Math.round(midiToHz(72)));
+      expect(pitches).not.toContain(Math.round(midiToHz(64)));
+    });
+
+    it('restarts with the edited notes too', async () => {
+      const player = new TonePlayer();
+      const original = notes(60, 62);
+      await player.play('memo-1', original);
+      player.pause();
+
+      player.updateNotes('memo-1', [
+        ...original,
+        { midi: 79, startMs: 1000, durationMs: 400, centsDeviation: 0, confidence: 1 },
+      ]);
+
+      const before = context().oscillators.length;
+      await player.restart();
+      expect(context().oscillators.length - before).toBe(3);
+    });
+
+    it('reschedules mid-playback so a change is heard on the way past', async () => {
+      const player = new TonePlayer();
+      const original = notes(60, 62, 64);
+      await player.play('memo-1', original);
+      const before = context().oscillators.length;
+
+      context().currentTime += 0.06 + 0.1;
+      player.updateNotes(
+        'memo-1',
+        original.map((note, i) => (i === 2 ? { ...note, midi: 72 } : note)),
+      );
+      // The reschedule awaits the audio context before building voices.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(context().oscillators.length).toBeGreaterThan(before);
+      expect(player.status).toBe('playing');
+    });
+
+    it('ignores notes for a memo the transport is not on', async () => {
+      const player = new TonePlayer();
+      await player.play('memo-1', notes(60, 62));
+      const before = context().oscillators.length;
+
+      player.updateNotes('memo-2', notes(72, 74));
+
+      // Another panel's edits must not touch what is playing here.
+      expect(context().oscillators.length).toBe(before);
+      expect(player.currentMemoId).toBe('memo-1');
+    });
+
+    it('ignores an unchanged array', async () => {
+      // Called from a render effect: rescheduling emits state, which re-runs
+      // the effect, so without this guard the two would loop.
+      const player = new TonePlayer();
+      const same = notes(60, 62);
+      await player.play('memo-1', same);
+      const before = context().oscillators.length;
+
+      player.updateNotes('memo-1', same);
+      player.updateNotes('memo-1', same);
+
+      expect(context().oscillators.length).toBe(before);
+    });
+
+    it('pulls the playhead back when the tail is deleted', () => {
+      const player = new TonePlayer();
+      player.load('memo-1', notes(60, 62, 64));
+      player.seek(1300);
+
+      player.updateNotes('memo-1', notes(60));
+      // Nothing to resume from beyond the new end.
+      expect(player.positionMs).toBeLessThanOrEqual(player.durationMs);
     });
   });
 

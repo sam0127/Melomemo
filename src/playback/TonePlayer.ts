@@ -73,7 +73,12 @@ export class TonePlayer {
 
   #status: TransportStatus = 'idle';
   #memoId: string | null = null;
-  #notes: QuantizedNote[] = [];
+  /**
+   * Readonly, and never copied on the way in: callers hand the same array the
+   * UI is rendering, so identity is meaningful and updateNotes can tell an
+   * actual edit from a re-render.
+   */
+  #notes: readonly QuantizedNote[] = [];
   /** Position the current run started from, in ms. */
   #offsetMs = 0;
   /** context.currentTime when the current run started. */
@@ -154,7 +159,7 @@ export class TonePlayer {
     return this.#context;
   }
 
-  static durationOf(notes: QuantizedNote[]): number {
+  static durationOf(notes: readonly QuantizedNote[]): number {
     return notes.reduce(
       (end, note) => Math.max(end, note.startMs + note.durationMs),
       0,
@@ -164,7 +169,7 @@ export class TonePlayer {
   /** Starts a sequence from `fromMs`, replacing anything already playing. */
   async play(
     memoId: string,
-    notes: QuantizedNote[],
+    notes: readonly QuantizedNote[],
     fromMs = 0,
   ): Promise<void> {
     this.#silence();
@@ -238,7 +243,7 @@ export class TonePlayer {
    * one; re-loading the same one leaves the position alone, or dragging the
    * playhead would jump back to the start on every render.
    */
-  load(memoId: string, notes: QuantizedNote[]): void {
+  load(memoId: string, notes: readonly QuantizedNote[]): void {
     if (this.#memoId === memoId) {
       this.#notes = notes;
       this.#durationMs = TonePlayer.durationOf(notes);
@@ -274,6 +279,35 @@ export class TonePlayer {
     // Idle means "at the start with nothing cued", which is no longer true.
     if (this.#status === 'idle') this.#emit('paused', this.#memoId);
     else this.#emit(this.#status, this.#memoId);
+  }
+
+  /**
+   * Adopts a new set of notes for the memo the transport is holding.
+   *
+   * Playback schedules every voice up front, so without this an edit made
+   * after play() is inaudible until the next start — pause, move a note, and
+   * resume, and it would sound where it used to be. The stored notes are what
+   * resume() and restart() replay, so keeping them current is the whole fix.
+   *
+   * Ignored for any memo the transport is not on, and for an unchanged array:
+   * this is called from a render effect, and rescheduling emits state, which
+   * would re-run the effect and reschedule again without that guard.
+   */
+  updateNotes(memoId: string, notes: readonly QuantizedNote[]): void {
+    if (this.#memoId !== memoId || this.#notes === notes) return;
+
+    const at = this.positionMs;
+    this.#notes = notes;
+    this.#durationMs = TonePlayer.durationOf(notes);
+    // Deleting the tail can leave the playhead beyond the end.
+    this.#offsetMs = Math.min(this.#offsetMs, this.#durationMs);
+
+    // Scheduled voices cannot be edited in place, so rebuild from where the
+    // playhead is. Any note sounding across that instant re-articulates —
+    // the cost of hearing the change without waiting for a restart.
+    if (this.#status === 'playing') {
+      void this.play(memoId, notes, at);
+    }
   }
 
   /**
