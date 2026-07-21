@@ -227,7 +227,13 @@ h2 {
   cursor: pointer;
 }
 
-.button:hover {
+/*
+ * :active as well as :hover — hover does not exist on touch, and the row
+ * suppresses the browser's own tap highlight, so this is the only press
+ * feedback a finger gets.
+ */
+.button:hover,
+.button:active {
   background: var(--surface-alt);
 }
 
@@ -279,6 +285,10 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 50%;
   cursor: pointer;
+}
+
+.memo-row__play:active {
+  background: var(--border);
 }
 
 .memo-row__meta {
@@ -359,7 +369,8 @@ h2 {
   cursor: pointer;
 }
 
-.memo-row__rename-button:hover {
+.memo-row__rename-button:hover,
+.memo-row__rename-button:active {
   color: var(--text);
   background: var(--surface-alt);
 }
@@ -371,6 +382,16 @@ h2 {
 /* The row is clickable, but only where nothing else claims the click. */
 .memo-row {
   cursor: pointer;
+  /*
+   * Mobile browsers paint a translucent overlay across the nearest clickable
+   * ancestor on tap. Now that the whole row is clickable, that meant a blue
+   * flash over the entire row — including an already-open transcription —
+   * every time it was touched. The row expanding is feedback enough; the
+   * controls inside keep their own, via the :active rules below.
+   *
+   * The property inherits, so this covers the row's descendants too.
+   */
+  -webkit-tap-highlight-color: transparent;
 }
 
 .memo-row__actions,

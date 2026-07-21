@@ -61,7 +61,7 @@ export function MemoList({
   if (memos.length === 0) {
     return (
       <p className="empty-state">
-        No memos yet. Press <strong>New recording</strong> and sing or whistle
+        No memos yet. Press <strong>New memo</strong> and sing or whistle
         something.
       </p>
     );

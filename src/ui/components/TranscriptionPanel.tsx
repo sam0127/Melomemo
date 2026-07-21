@@ -202,17 +202,6 @@ export function TranscriptionPanel({
               onDelete: scoreApi.deleteNote,
             }}
           />
-
-          {/*
-            The accessible equivalent of the chart above. Listing the note
-            names in order is the part a screen-reader user can actually use.
-          */}
-          {notes.length > 0 && (
-            <p className="transcription__notes">
-              <span className="visually-hidden">Notes in order: </span>
-              {notes.map((note) => midiToName(note.midi)).join(' ')}
-            </p>
-          )}
         </>
       }
 
@@ -289,6 +278,18 @@ export function TranscriptionPanel({
 
       {showDetails && (
         <div className="transcription__details">
+          {/*
+            The notes as a scannable line. Not the chart's accessible
+            equivalent any more — each note on the roll is a focusable control
+            carrying its own label, so nothing is hidden behind this toggle.
+          */}
+          {notes.length > 0 && (
+            <p className="transcription__notes">
+              <span className="visually-hidden">Notes in order: </span>
+              {notes.map((note) => midiToName(note.midi)).join(' ')}
+            </p>
+          )}
+
           <dl className="transcription__stats">
             <div>
               <dt>Engine</dt>

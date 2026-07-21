@@ -25,7 +25,7 @@ export function RecordButton({
       ? state === 'preparing'
         ? 'Starting…'
         : 'Saving…'
-      : 'New recording';
+      : 'New memo';
 
   return (
     <div className="recorder">
