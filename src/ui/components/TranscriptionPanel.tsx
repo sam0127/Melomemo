@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { isStale } from '../../analysis/registry.ts';
 import { midiToName } from '../../core/pitch.ts';
 import type { AnalysisRecord, Memo } from '../../core/types.ts';
@@ -53,6 +53,14 @@ export function TranscriptionPanel({
   // analysis; from the first edit it is an independent document that
   // re-transcription never overwrites.
   const scoreApi = useScore(repository, memo, analysis);
+
+  // Bound to this memo so the playhead reads this memo's position, not
+  // whatever the transport is paused at on another. Memoized because
+  // PianoRoll's animation-frame effect depends on its identity.
+  const getPositionMs = useCallback(
+    () => notePlayback.positionMs(memo),
+    [notePlayback, memo],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -182,7 +190,7 @@ export function TranscriptionPanel({
             }}
             durationMs={memo.capture.durationMs}
             transport={transportStatus}
-            getPositionMs={notePlayback.positionMs}
+            getPositionMs={getPositionMs}
             scrubber={{
               onScrubStart: () => notePlayback.beginScrub(memo, notes),
               onScrubEnd: (ms) => notePlayback.endScrub(memo, notes, ms),

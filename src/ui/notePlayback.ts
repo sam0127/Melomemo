@@ -29,9 +29,14 @@ export interface NotePlaybackControls {
   /** Seeks to the scrubbed position and resumes if it had been playing. */
   endScrub: (memo: Memo, notes: readonly QuantizedNote[], ms: number) => void;
   /**
-   * Current playhead position in ms. A function, not a value: it changes every
-   * frame and is polled from an animation frame rather than pushed through
-   * React state.
+   * Playhead position in ms for a given memo. A function, not a value: it
+   * changes every frame and is polled from an animation frame rather than
+   * pushed through React state.
+   *
+   * Takes the memo because the transport holds only one at a time. A panel
+   * whose memo the transport is not currently on reports 0 — otherwise it
+   * would draw its playhead at whatever position the *other* memo happens to
+   * be paused at.
    */
-  positionMs: () => number;
+  positionMs: (memo: Memo) => number;
 }

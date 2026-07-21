@@ -196,7 +196,10 @@ export function App() {
         }
       },
 
-      positionMs: () => tonePlayer.positionMs,
+      positionMs: (memo) =>
+        // Only the memo the transport actually holds has a live position;
+        // every other panel's playhead sits at the start.
+        tonePlayer.currentMemoId === memo.id ? tonePlayer.positionMs : 0,
     }),
     [noteTransport, playback, tonePlayer],
   );
